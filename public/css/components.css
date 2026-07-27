@@ -1,0 +1,207 @@
+/* Shared widgets used across multiple views */
+
+.movie-card {
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  transition: transform 0.2s ease;
+}
+
+.movie-card:hover {
+  transform: scale(1.02);
+}
+
+.movie-card:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.cover {
+  aspect-ratio: 3 / 2;
+  width: 100%;
+  border-radius: var(--radius);
+  background: #e8e8ed
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 24 24' fill='none' stroke='%23aeaeb2' stroke-width='1.5'%3E%3Crect x='3' y='3' width='18' height='18' rx='2'/%3E%3Ccircle cx='8.5' cy='8.5' r='1.5'/%3E%3Cpath d='M21 15l-5-5L5 21'/%3E%3C/svg%3E")
+    center/48px no-repeat;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  position: relative;
+}
+
+.cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
+.card-meta {
+  padding: 0 0.15rem;
+}
+
+.card-code {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--blue);
+  letter-spacing: 0.02em;
+}
+
+.card-title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin: 0.15rem 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  letter-spacing: -0.01em;
+}
+
+.card-actresses {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  margin: 1.75rem 0 0.5rem;
+  padding: 0.5rem 0;
+}
+
+.pager[hidden] {
+  display: none;
+}
+
+.pager-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 980px;
+  padding: 0.45rem 1rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.pager-btn:hover:not(:disabled) {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.pager-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pager-info {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.tag-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0.5rem;
+  min-height: 1.75rem;
+}
+
+.tag {
+  display: inline-block;
+  padding: 0.3rem 0.7rem;
+  border-radius: 980px;
+  background: rgba(0, 0, 0, 0.05);
+  font-size: 0.8rem;
+  color: var(--text);
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.tag:hover {
+  background: rgba(0, 113, 227, 0.12);
+  color: var(--blue);
+}
+
+.tag.tag-editable {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.15rem 0.25rem 0.15rem 0.55rem;
+  cursor: default;
+}
+
+.tag.tag-editable:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text);
+}
+
+.tag-text {
+  border: none;
+  background: transparent;
+  padding: 0.15rem 0.2rem;
+  font: inherit;
+  font-size: 0.8rem;
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+  border-radius: 6px;
+}
+
+.tag-text:hover {
+  color: var(--blue);
+}
+
+.tag-remove {
+  border: none;
+  background: transparent;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tag-remove:hover {
+  background: rgba(215, 0, 21, 0.12);
+  color: #d70015;
+}
+
+.form-status {
+  margin-top: 1.25rem;
+  font-size: 0.95rem;
+  min-height: 1.4em;
+}
+
+.form-status.error {
+  color: #d70015;
+}
+
+.form-status.ok {
+  color: #248a3d;
+}

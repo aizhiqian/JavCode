@@ -1,0 +1,32 @@
+.labels-section {
+  margin-bottom: 2rem;
+}
+
+.labels-heading {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 0.85rem;
+  letter-spacing: -0.01em;
+}
+
+.labels-cloud .tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.9rem;
+}
+
+.tag-count {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 980px;
+  padding: 0.1rem 0.45rem;
+  font-weight: 500;
+}
+
+.tag:hover .tag-count {
+  background: rgba(0, 113, 227, 0.15);
+  color: var(--blue);
+}

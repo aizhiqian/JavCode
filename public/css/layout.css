@@ -1,0 +1,149 @@
+.top-bar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.75rem 2rem;
+  background: rgba(251, 251, 253, 0.8);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(145deg, #0071e3, #42a1ec);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.brand-name {
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+
+.search-wrap {
+  flex: 1;
+  max-width: 480px;
+  position: relative;
+  margin: 0 auto;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+.search-wrap input {
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 0.55rem 0.9rem 0.55rem 2.2rem;
+  font-size: 0.95rem;
+  color: var(--text);
+  outline: none;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.search-wrap input:focus {
+  background: var(--surface);
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.2);
+}
+
+.top-nav {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.nav-link {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.9rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: 980px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.nav-link:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.nav-link.active {
+  background: var(--text);
+  color: #fff;
+}
+
+main {
+  flex: 1;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem 2rem 3rem;
+}
+
+.view {
+  display: none;
+}
+
+.view.active {
+  display: block;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.section-head h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+@media (max-width: 800px) {
+  .top-bar {
+    flex-wrap: wrap;
+    padding: 0.75rem 1rem;
+  }
+  main {
+    padding: 1rem 1rem 2rem;
+  }
+}
+
+.site-footer {
+  text-align: center;
+  padding: 1.5rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  border-top: 1px solid var(--border);
+}
+
+.site-footer p {
+  margin: 0;
+}

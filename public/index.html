@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JavCode — 个人影片收藏</title>
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/layout.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/catalog.css" />
+  <link rel="stylesheet" href="css/detail.css" />
+  <link rel="stylesheet" href="css/labels.css" />
+  <link rel="stylesheet" href="css/actresses.css" />
+  <link rel="stylesheet" href="css/forms.css" />
+  <link rel="stylesheet" href="css/auth.css" />
+</head>
+<body>
+  
+  <div id="authGate" class="auth-gate hidden" aria-live="polite">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">JavCode</span>
+      </div>
+      <div id="authSetup" class="auth-panel hidden">
+        <h1>初始化管理员</h1>
+        <p class="muted">首次使用请设置唯一管理员账号（个人本地鉴权）。</p>
+        <form id="setupForm" class="auth-form">
+          <label class="field">
+            <span>用户名</span>
+            <input id="setupUsername" name="username" value="admin" required autocomplete="username" />
+          </label>
+          <label class="field">
+            <span>密码</span>
+            <input id="setupPassword" name="password" type="password" required minlength="4" autocomplete="new-password" />
+          </label>
+          <label class="field">
+            <span>确认密码</span>
+            <input id="setupPassword2" name="password2" type="password" required minlength="4" autocomplete="new-password" />
+          </label>
+          <button type="submit" class="btn primary" id="setupBtn">完成并进入</button>
+        </form>
+        <p id="setupError" class="auth-error" hidden></p>
+      </div>
+      <div id="authLogin" class="auth-panel hidden">
+        <h1>管理员登录</h1>
+        <p class="muted">登录后可管理收藏与设置。</p>
+        <form id="loginForm" class="auth-form">
+          <label class="field">
+            <span>用户名</span>
+            <input id="loginUsername" name="username" required autocomplete="username" />
+          </label>
+          <label class="field">
+            <span>密码</span>
+            <input id="loginPassword" name="password" type="password" required autocomplete="current-password" />
+          </label>
+          <button type="submit" class="btn primary" id="loginBtn">登录</button>
+        </form>
+        <p id="loginError" class="auth-error" hidden></p>
+      </div>
+    </div>
+  </div>
+
+  <div id="appShell" class="app-shell hidden">
+  <header class="top-bar">
+    <div class="brand" id="brandHome">
+      <span class="brand-mark"></span>
+      <span class="brand-name">JavCode</span>
+    </div>
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <input
+        id="searchInput"
+        type="search"
+        placeholder="搜索番号、女优、标签…"
+        autocomplete="off"
+        enterkeyhint="search"
+      />
+    </div>
+    <nav class="top-nav">
+      <button type="button" class="nav-link active" data-view="catalog">资料库</button>
+      <button type="button" class="nav-link" data-view="labels">标签</button>
+      <button type="button" class="nav-link" data-view="actresses">女优</button>
+      <button type="button" class="nav-link" data-view="add">添加</button>
+      <button type="button" class="nav-link" data-view="settings">设置</button>
+      <button type="button" class="nav-link nav-logout" id="logoutBtn">退出</button>
+    </nav>
+  </header>
+
+  <main>
+    
+    <section id="view-catalog" class="view active">
+      <div class="hero-banner">
+        <div class="hero-copy">
+          <p class="eyebrow">个人收藏</p>
+          <h1>发现你的影片库</h1>
+          <p class="hero-sub">输入番号，自动检索、分类、标签，并翻译为简体中文。</p>
+        </div>
+      </div>
+      <div class="section-head">
+        <h2 id="catalogTitle">全部影片</h2>
+        <p id="catalogCount" class="muted"></p>
+      </div>
+      <div id="catalogGrid" class="card-grid" role="list"></div>
+      <div id="catalogPager" class="pager" hidden></div>
+      <div id="catalogEmpty" class="empty-state hidden">
+        <h3>资料库还是空的</h3>
+        <p>添加一个番号开始收藏。</p>
+        <button type="button" class="btn primary" data-view="add">添加番号</button>
+      </div>
+    </section>
+
+    
+    <section id="view-detail" class="view">
+      <button type="button" class="back-link" id="backToCatalog">← 返回资料库</button>
+      <div id="detailRoot" class="detail-layout"></div>
+    </section>
+
+    
+    <section id="view-labels" class="view">
+      <div class="section-head">
+        <h2>标签与分类</h2>
+        <p class="muted">点击即可筛选收藏影片</p>
+      </div>
+      <div class="labels-section">
+        <h3 class="labels-heading">分类</h3>
+        <div id="categoriesCloud" class="tag-cloud labels-cloud"></div>
+        <p id="categoriesEmpty" class="muted hidden">暂无分类</p>
+      </div>
+      <div class="labels-section">
+        <h3 class="labels-heading">标签</h3>
+        <div id="tagsCloud" class="tag-cloud labels-cloud"></div>
+        <p id="tagsEmpty" class="muted hidden">暂无标签</p>
+      </div>
+    </section>
+
+    
+    <section id="view-actresses" class="view">
+      <div class="section-head">
+        <h2>女优</h2>
+        <p id="actressCount" class="muted">点击名字查看她的收藏影片</p>
+      </div>
+      <div class="actress-filters">
+        <label class="actress-search-wrap">
+          <span class="visually-hidden">按拼音或名字筛选</span>
+          <input
+            id="actressPinyinInput"
+            type="search"
+            placeholder="拼音或名字，如 kui / 葵"
+            autocomplete="off"
+            enterkeyhint="search"
+          />
+        </label>
+        <div id="actressInitialBar" class="initial-bar" role="toolbar" aria-label="按拼音首字母筛选"></div>
+      </div>
+      <div id="actressList" class="actress-grid" role="list"></div>
+      <div id="actressPager" class="pager" hidden></div>
+    </section>
+
+    
+    <section id="view-add" class="view">
+      <div class="add-panel">
+        <h2>添加番号</h2>
+        <p class="muted">从 JavDB / JavLibrary 检索元数据，自动分类并译为简体中文。可选用 AI API 增强翻译与标签。</p>
+        <p id="aiStatusLine" class="ai-status muted">AI：检测中…</p>
+        <form id="enrichForm" class="enrich-form">
+          <label class="field">
+            <span>番号</span>
+            <input id="codeInput" name="code" placeholder="例如 SSIS-001" required autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>数据源优先</span>
+            <select id="preferSelect" name="prefer">
+              <option value="javdb">JavDB</option>
+              <option value="javlibrary">JavLibrary</option>
+            </select>
+          </label>
+          <label class="field check-field">
+            <span class="check-row">
+              <input type="checkbox" id="useAiCheck" name="use_ai" checked />
+              <span>使用 AI 翻译 / 分类 / 打标签</span>
+            </span>
+            <span class="field-hint">需配置 AI API Key（设置页或 JAVCODE_AI_API_KEY）。未配置时仅做简繁转换与规则分类，日文不会自动译成中文。</span>
+          </label>
+          <button type="submit" class="btn primary" id="enrichBtn">检索并收藏</button>
+        </form>
+        <div id="enrichStatus" class="form-status" aria-live="polite"></div>
+        <div id="enrichPreview" class="enrich-preview"></div>
+      </div>
+    </section>
+
+    
+    <section id="view-settings" class="view">
+      <div class="add-panel settings-panel">
+        <h2>设置</h2>
+        <p class="muted">此处配置优先于 <code>.env</code>。保存后立即生效。API Key / 代理等以明文显示便于核对。</p>
+        <form id="settingsForm" class="enrich-form settings-form">
+          <h3 class="settings-section-title">AI</h3>
+          <label class="field">
+            <span>API Key</span>
+            <input id="setAiKey" name="ai_api_key" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span>Base URL</span>
+            <input id="setAiBase" name="ai_base_url" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span>模型</span>
+            <input id="setAiModel" name="ai_model" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span>启用 AI（1/0）</span>
+            <input id="setAiEnabled" name="ai_enabled" type="text" placeholder="留空=有 Key 则启用" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>超时秒数</span>
+            <input id="setAiTimeout" name="ai_timeout" type="text" autocomplete="off" />
+          </label>
+
+          <h3 class="settings-section-title">网络</h3>
+          <label class="field">
+            <span>全局代理</span>
+            <input id="setProxy" name="proxy" type="text" placeholder="http://127.0.0.1:7890" autocomplete="off" spellcheck="false" />
+          </label>
+
+          <h3 class="settings-section-title">管理员账号</h3>
+          <label class="field">
+            <span>用户名</span>
+            <input id="setAdminUser" name="admin_username" type="text" autocomplete="username" />
+          </label>
+          <label class="field">
+            <span>新密码（留空不修改）</span>
+            <input id="setAdminPass" name="admin_password" type="text" autocomplete="new-password" spellcheck="false" />
+          </label>
+          <p class="field-hint">将某配置项清空并保存，可删除设置覆盖并回退到 .env。密码仅哈希存储，此处不明文回显旧密码。</p>
+          <div class="settings-actions">
+            <button type="submit" class="btn primary" id="settingsSaveBtn">保存设置</button>
+            <button type="button" class="btn" id="settingsClearOverrides">清除全部覆盖</button>
+          </div>
+        </form>
+        <div id="settingsStatus" class="form-status" aria-live="polite"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>仅供个人本地元数据收藏 · 不提供视频托管或下载</p>
+  </footer>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

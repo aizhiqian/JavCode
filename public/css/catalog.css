@@ -1,0 +1,47 @@
+.hero-banner {
+  background: linear-gradient(135deg, #1d1d1f 0%, #424245 100%);
+  color: #f5f5f7;
+  border-radius: 28px;
+  padding: 3rem 2.5rem;
+  margin-bottom: 2.5rem;
+  box-shadow: var(--shadow-lg);
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  opacity: 0.7;
+  margin: 0 0 0.5rem;
+}
+
+.hero-banner h1 {
+  font-size: clamp(1.8rem, 4vw, 2.75rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin: 0 0 0.6rem;
+}
+
+.hero-sub {
+  margin: 0;
+  max-width: 36rem;
+  opacity: 0.85;
+  font-size: 1.05rem;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1.5rem 1.25rem;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 4rem 1rem;
+  color: var(--text-secondary);
+}
+
+.empty-state h3 {
+  color: var(--text);
+  margin-bottom: 0.5rem;
+}

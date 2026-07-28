@@ -15,15 +15,14 @@ from .auth import (
     try_setup,
 )
 from .enrich import EnrichResult, enrich_code
-from .env import ROOT, load_project_env, parse_bool, proxy_public_status
+from .env import ROOT, load_project_env, parse_bool
 from .fetchers import SourceFetcher
 from .models import MovieEntry
 from .normalize import normalize_code
-from .relationships import actress_index
-from .search import label_index, search_library
 from .settings import (
     SettingsStore,
-    apply_effective_proxy,
+    proxy_public_status,
+    resolve_proxy_dict,
     settings_public_view,
     update_settings_from_payload,
 )
@@ -44,8 +43,6 @@ def create_app(
     store = CollectionStore(db)
     settings = SettingsStore(db)
     settings.bootstrap_admin_from_env()
-    settings.ensure_secret_key()
-
     app.secret_key = settings.ensure_secret_key()
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
     app.config["SESSION_COOKIE_HTTPONLY"] = True
@@ -54,19 +51,19 @@ def create_app(
     app.config["STORE"] = store
     app.config["SETTINGS"] = settings
 
-    proxies = apply_effective_proxy(settings)
+    proxies = resolve_proxy_dict(settings)
     if ai_client is None:
-        ai_client = AIClient.from_settings(settings, proxies=proxies or None)
+        ai_client = AIClient.from_settings(settings, proxies=proxies)
     if fetcher is None:
-        fetcher = SourceFetcher(proxies=proxies or None)
+        fetcher = SourceFetcher(proxies=proxies)
     app.config["FETCHER"] = fetcher
     app.config["AI_CLIENT"] = ai_client
 
     def _reload_runtime() -> None:
         s: SettingsStore = app.config["SETTINGS"]
-        proxies_now = apply_effective_proxy(s)
-        app.config["AI_CLIENT"] = AIClient.from_settings(s, proxies=proxies_now or None)
-        app.config["FETCHER"] = SourceFetcher(proxies=proxies_now or None)
+        proxies_now = resolve_proxy_dict(s)
+        app.config["AI_CLIENT"] = AIClient.from_settings(s, proxies=proxies_now)
+        app.config["FETCHER"] = SourceFetcher(proxies=proxies_now)
 
     app.config["RELOAD_RUNTIME"] = _reload_runtime
 
@@ -106,7 +103,7 @@ def create_app(
                 "authenticated": True,
                 "configured": True,
                 "ai": _ai_public_status(app),
-                "proxy": proxy_public_status(),
+                "proxy": proxy_public_status(app.config["SETTINGS"]),
             }
         )
 
@@ -227,24 +224,23 @@ def create_app(
 
     @app.get("/api/labels")
     def list_labels():
-        return jsonify({"ok": True, **label_index(app.config["STORE"].list_all())})
+        return jsonify({"ok": True, **app.config["STORE"].label_index()})
 
     @app.get("/api/actresses")
     def list_actresses():
-        return jsonify({"ok": True, "items": actress_index(app.config["STORE"].list_all())})
+        return jsonify({"ok": True, "items": app.config["STORE"].actress_index()})
 
     return app
 
 
 def _query_movies(store: CollectionStore, args) -> list[MovieEntry]:
-    entries = store.list_all()
     q = args.get("q")
     code = args.get("code")
     actress = args.get("actress")
     tag = args.get("tag")
     if q or code or actress or tag:
-        return search_library(entries, code=code, actress=actress, tag=tag, query=q)
-    return entries
+        return store.search(code=code, actress=actress, tag=tag, query=q)
+    return store.list_all()
 
 
 def _ai_public_status(app: Flask) -> dict:

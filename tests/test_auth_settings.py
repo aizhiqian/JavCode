@@ -37,12 +37,21 @@ def test_password_hash_roundtrip():
 
 
 def test_settings_override_beats_env(tmp_path, monkeypatch):
+    from src.settings import resolve_proxy_dict
+
     monkeypatch.setenv("JAVCODE_AI_API_KEY", "from-env-key")
     monkeypatch.setenv("JAVCODE_PROXY", "http://env-proxy:1")
+
     store = SettingsStore(tmp_path / "s.db")
     cfg = AIConfig.resolve(store)
     assert cfg.api_key == "from-env-key"
-    assert effective_proxy(store).source == "env"
+    rv = effective_proxy(store)
+    assert rv.source == "env"
+    assert rv.value == "http://env-proxy:1"
+    assert resolve_proxy_dict(store) == {
+        "http": rv.value,
+        "https": rv.value,
+    }
 
     update_settings_from_payload(
         store,
@@ -50,13 +59,38 @@ def test_settings_override_beats_env(tmp_path, monkeypatch):
     )
     cfg2 = AIConfig.resolve(store)
     assert cfg2.api_key == "from-settings-key"
-    assert effective_proxy(store).value == "http://settings-proxy:2"
-    assert effective_proxy(store).source == "settings"
+    rv2 = effective_proxy(store)
+    assert rv2.value == "http://settings-proxy:2"
+    assert rv2.source == "settings"
+    assert resolve_proxy_dict(store) == {
+        "http": rv2.value,
+        "https": rv2.value,
+    }
+    # Settings override is in DB only; process env stays unchanged.
+    assert os.environ.get("JAVCODE_PROXY") == "http://env-proxy:1"
 
     update_settings_from_payload(store, {"ai_api_key": "", "proxy": ""})
     cfg3 = AIConfig.resolve(store)
     assert cfg3.api_key == "from-env-key"
-    assert effective_proxy(store).source == "env"
+    rv3 = effective_proxy(store)
+    assert rv3.source == "env"
+    assert rv3.value == "http://env-proxy:1"
+    assert resolve_proxy_dict(store) == {
+        "http": rv3.value,
+        "https": rv3.value,
+    }
+
+
+def test_proxy_default_empty_without_javcode_or_settings(tmp_path, monkeypatch):
+    from src.settings import resolve_proxy_dict
+
+    monkeypatch.delenv("JAVCODE_PROXY", raising=False)
+    store = SettingsStore(tmp_path / "s.db")
+    rv = effective_proxy(store)
+    assert rv.value == ""
+    assert rv.source == "default"
+    assert resolve_proxy_dict(store) == {}
+    assert resolve_proxy_dict(None) == {}
 
 
 def test_settings_public_view_plain_text(tmp_path, monkeypatch):

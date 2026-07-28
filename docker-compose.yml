@@ -1,0 +1,21 @@
+# Local / self-hosted deploy.
+# Prefer a prebuilt image from GHCR (built manually via Actions), or build locally.
+services:
+  javcode:
+    image: ghcr.io/aizhiqian/javcode:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${JAVCODE_PORT:-8765}:8765"
+    volumes:
+      # Persist SQLite DB and app settings
+      - ./data:/app/data
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      JAVCODE_HOST: "0.0.0.0"
+      JAVCODE_PORT: "8765"
+      JAVCODE_DB: /app/data/collection.db
+    restart: unless-stopped

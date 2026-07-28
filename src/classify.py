@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from .labels import dedupe_labels
 from .models import MovieEntry
-from .translate import to_simplified
 
 STUDIO_CATEGORY: dict[str, str] = {
     "S1 NO.1 STYLE": "S1作品",
@@ -38,52 +38,48 @@ def _prefix(code: str) -> str:
     return code.split("-", 1)[0].upper()
 
 
-def _dedupe_append(bucket: list[str], label: str) -> None:
-    lab = to_simplified(label)
-    if lab and lab not in bucket:
-        bucket.append(lab)
-
-
 def derive_rule_labels(entry: MovieEntry) -> tuple[list[str], list[str]]:
-    tags = list(entry.tags)
-    categories = list(entry.categories)
+    extra_tags: list[str] = []
+    extra_categories: list[str] = []
 
     pref = _prefix(entry.code)
     if pref in CODE_PREFIX_LABEL:
-        _dedupe_append(categories, CODE_PREFIX_LABEL[pref])
+        extra_categories.append(CODE_PREFIX_LABEL[pref])
 
     studio_key = (entry.studio or "").strip()
     if studio_key in STUDIO_CATEGORY:
-        _dedupe_append(categories, STUDIO_CATEGORY[studio_key])
+        extra_categories.append(STUDIO_CATEGORY[studio_key])
     elif studio_key:
-        _dedupe_append(categories, studio_key)
+        extra_categories.append(studio_key)
 
     females = [a for a in entry.actresses if a.gender != "male"]
     if len(females) >= 2:
         for lab in ("多女优", "共演"):
-            _dedupe_append(tags, lab)
-            _dedupe_append(categories, lab)
+            extra_tags.append(lab)
+            extra_categories.append(lab)
     elif len(females) == 1:
-        _dedupe_append(tags, "单体女优")
-        _dedupe_append(categories, "单体女优")
+        extra_tags.append("单体女优")
+        extra_categories.append("单体女优")
 
     if entry.duration_minutes:
         if entry.duration_minutes >= 180:
-            _dedupe_append(tags, "长篇")
-            _dedupe_append(categories, "长篇")
+            extra_tags.append("长篇")
+            extra_categories.append("长篇")
         elif entry.duration_minutes <= 60:
-            _dedupe_append(tags, "短片")
-            _dedupe_append(categories, "短片")
+            extra_tags.append("短片")
+            extra_categories.append("短片")
 
     if entry.series:
-        _dedupe_append(tags, "系列作品")
-        _dedupe_append(categories, "系列作品")
+        extra_tags.append("系列作品")
+        extra_categories.append("系列作品")
 
     if entry.release_date and len(entry.release_date) >= 4:
         year = entry.release_date[:4]
         if year.isdigit():
-            _dedupe_append(categories, f"{year}年")
+            extra_categories.append(f"{year}年")
 
+    tags = dedupe_labels(list(entry.tags) + extra_tags, simplify=True)
+    categories = dedupe_labels(list(entry.categories) + extra_categories, simplify=True)
     return tags, categories
 
 

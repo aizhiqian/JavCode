@@ -7,9 +7,9 @@ from src.enrich import enrich_code, enrich_from_html
 from src.env import ROOT
 from src.models import Actress, MovieEntry
 from src.normalize import normalize_code
+from src.media import normalize_cover_url
 from src.parsers import (
     ParseError,
-    normalize_cover_url,
     parse_javdb_detail,
     parse_javdb_search,
     parse_javlibrary_detail,
@@ -56,7 +56,7 @@ def test_parse_javdb_prefers_full_cover_over_thumb():
     assert "/thumbs/" not in entry.cover_url
 
 
-def test_store_upgrades_thumb_cover_on_read(tmp_path):
+def test_store_upgrades_thumb_cover_on_write_and_legacy_read(tmp_path):
     store = CollectionStore(tmp_path / "t.db")
     store.upsert(
         MovieEntry(
@@ -69,6 +69,18 @@ def test_store_upgrades_thumb_cover_on_read(tmp_path):
     got = store.get_by_code("SSIS-001")
     assert got is not None
     assert got.cover_url == "https://c0.jdbstatic.com/covers/zy/ZY5eq.jpg"
+
+    # Legacy row written before canonicalize-on-write still upgrades on read.
+    import sqlite3
+
+    with sqlite3.connect(str(tmp_path / "t.db")) as conn:
+        conn.execute(
+            "UPDATE movies SET cover_url = ? WHERE code = ?",
+            ("https://c0.jdbstatic.com/thumbs/zy/ZY5eq.jpg", "SSIS-001"),
+        )
+    legacy = store.get_by_code("SSIS-001")
+    assert legacy is not None
+    assert legacy.cover_url == "https://c0.jdbstatic.com/covers/zy/ZY5eq.jpg"
 
 
 def test_parse_javdb_detail_multi_actress():

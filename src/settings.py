@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .env import apply_proxy_from_env
+from .constants import DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL
 
 SETTING_KEYS = (
     "ai_api_key",
@@ -28,7 +28,7 @@ DEFAULT_ADMIN_USERNAME = "admin"
 @dataclass
 class ResolvedValue:
     value: str
-    source: str
+    source: str  # "settings" | "env" | "default" | "inferred"
 
 
 class SettingsStore:
@@ -159,8 +159,6 @@ def resolve_setting(
 
 
 def effective_ai_fields(store: SettingsStore | None) -> dict[str, ResolvedValue]:
-    from .ai import DEFAULT_BASE_URL, DEFAULT_MODEL
-
     key = resolve_setting(
         store,
         "ai_api_key",
@@ -170,13 +168,13 @@ def effective_ai_fields(store: SettingsStore | None) -> dict[str, ResolvedValue]
         store,
         "ai_base_url",
         env_names=("JAVCODE_AI_BASE_URL", "OPENAI_BASE_URL"),
-        default=DEFAULT_BASE_URL,
+        default=DEFAULT_AI_BASE_URL,
     )
     model = resolve_setting(
         store,
         "ai_model",
         env_names=("JAVCODE_AI_MODEL", "OPENAI_MODEL"),
-        default=DEFAULT_MODEL,
+        default=DEFAULT_AI_MODEL,
     )
     enabled = resolve_setting(
         store,
@@ -200,33 +198,42 @@ def effective_ai_fields(store: SettingsStore | None) -> dict[str, ResolvedValue]
 
 
 def effective_proxy(store: SettingsStore | None) -> ResolvedValue:
+    """Proxy URL: settings override → JAVCODE_PROXY → empty (direct)."""
     return resolve_setting(
         store,
         "proxy",
-        env_names=(
-            "JAVCODE_PROXY",
-            "JAVCODE_ALL_PROXY",
-            "JAVCODE_HTTPS_PROXY",
-            "JAVCODE_HTTP_PROXY",
-            "HTTPS_PROXY",
-            "HTTP_PROXY",
-            "ALL_PROXY",
-        ),
+        env_names=("JAVCODE_PROXY",),
         default="",
     )
 
 
-def apply_effective_proxy(store: SettingsStore | None) -> dict[str, str]:
-    resolved = effective_proxy(store)
-    if resolved.source == "settings" and resolved.value:
-        os.environ["JAVCODE_PROXY"] = resolved.value
-        os.environ["HTTP_PROXY"] = resolved.value
-        os.environ["HTTPS_PROXY"] = resolved.value
-        os.environ["http_proxy"] = resolved.value
-        os.environ["https_proxy"] = resolved.value
-        os.environ["ALL_PROXY"] = resolved.value
-        os.environ["all_proxy"] = resolved.value
-    return apply_proxy_from_env()
+def resolve_proxy_dict(store: SettingsStore | None = None) -> dict[str, str]:
+    """Single entry for HTTP clients: settings → JAVCODE_PROXY → {} (direct)."""
+    url = (effective_proxy(store).value or "").strip()
+    if not url:
+        return {}
+    return {"http": url, "https": url}
+
+
+def proxy_public_status(store: SettingsStore | None = None) -> dict[str, Any]:
+    """Redacted proxy status for health / UI (via resolve_proxy_dict only)."""
+    resolved = resolve_proxy_dict(store)
+    url = (resolved.get("http") or resolved.get("https") or "").strip()
+
+    def _redact(u: str) -> str:
+        if "@" not in u:
+            return u
+        try:
+            scheme, rest = u.split("://", 1)
+            if "@" in rest:
+                rest = rest.split("@", 1)[1]
+                return f"{scheme}://***@{rest}"
+        except ValueError:
+            pass
+        return "***"
+
+    shown = _redact(url) if url else ""
+    return {"enabled": bool(url), "http": shown, "https": shown}
 
 
 def settings_public_view(store: SettingsStore) -> dict[str, Any]:
@@ -242,10 +249,15 @@ def settings_public_view(store: SettingsStore) -> dict[str, Any]:
         }
 
     enabled_rv = fields["ai_enabled"]
-    enabled_display = enabled_rv.value
-    if enabled_rv.source == "default" or enabled_display == "":
+    if enabled_rv.value != "":
+        enabled_field = pack("ai_enabled", enabled_rv)
+    else:
         key_present = bool(fields["ai_api_key"].value.strip())
-        enabled_display = "1" if key_present else "0"
+        enabled_field = {
+            "value": "1" if key_present else "0",
+            "source": "inferred",
+            "override": stored.get("ai_enabled", ""),
+        }
 
     return {
         "admin_username": store.admin_username(),
@@ -253,13 +265,7 @@ def settings_public_view(store: SettingsStore) -> dict[str, Any]:
             "ai_api_key": pack("ai_api_key", fields["ai_api_key"]),
             "ai_base_url": pack("ai_base_url", fields["ai_base_url"]),
             "ai_model": pack("ai_model", fields["ai_model"]),
-            "ai_enabled": {
-                "value": enabled_display if enabled_rv.value != "" else enabled_display,
-                "source": enabled_rv.source if enabled_rv.value != "" else (
-                    "default" if "ai_enabled" not in stored else "settings"
-                ),
-                "override": stored.get("ai_enabled", ""),
-            },
+            "ai_enabled": enabled_field,
             "ai_timeout": pack("ai_timeout", fields["ai_timeout"]),
             "proxy": pack("proxy", proxy),
         },
@@ -292,5 +298,4 @@ def update_settings_from_payload(
 
         store.set(META_ADMIN_PASSWORD_HASH, hash_password(str(new_password)))
 
-    apply_effective_proxy(store)
     return settings_public_view(store)

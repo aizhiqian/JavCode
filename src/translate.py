@@ -1,26 +1,15 @@
 from __future__ import annotations
 
-import zhconv
-
+from .labels import dedupe_labels, to_simplified
+from .media import normalize_cover_url
 from .models import Actress, MovieEntry
 
-
-def to_simplified(text: str) -> str:
-    if not text:
-        return ""
-    return zhconv.convert(text.strip(), "zh-cn")
-
-
-def _dedupe_simplified(items: list[str]) -> list[str]:
-    out: list[str] = []
-    for item in items:
-        lab = to_simplified(item) if item else ""
-        if lab and lab not in out:
-            out.append(lab)
-    return out
+# to_simplified lives in labels; re-export kept for older imports.
+__all__ = ["to_simplified", "normalize_entry", "ensure_zh_fields"]
 
 
 def normalize_entry(entry: MovieEntry) -> MovieEntry:
+    """Domain normalize: zh-simplify text fields, dedupe labels, full cover URL."""
     actresses = [
         Actress(
             name=to_simplified(a.name_original or a.name) or (a.name_original or a.name),
@@ -34,8 +23,9 @@ def normalize_entry(entry: MovieEntry) -> MovieEntry:
         title=to_simplified(title_src) or title_src,
         title_original=entry.title_original or entry.title,
         actresses=actresses,
-        tags=_dedupe_simplified(list(entry.tags)),
-        categories=_dedupe_simplified(list(entry.categories)),
+        tags=dedupe_labels(list(entry.tags), simplify=True),
+        categories=dedupe_labels(list(entry.categories), simplify=True),
+        cover_url=normalize_cover_url(entry.cover_url or ""),
         studio=to_simplified(entry.studio) if entry.studio else "",
         director=to_simplified(entry.director) if entry.director else "",
         series=to_simplified(entry.series) if entry.series else "",

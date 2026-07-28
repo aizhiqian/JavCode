@@ -5,6 +5,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
+from .media import normalize_cover_url
 from .models import Actress, MovieEntry
 from .normalize import normalize_code
 
@@ -17,19 +18,6 @@ def _text(el: Tag | None) -> str:
     if el is None:
         return ""
     return " ".join(el.get_text(" ", strip=True).split())
-
-
-def normalize_cover_url(url: str) -> str:
-    if not url:
-        return ""
-    u = str(url).strip()
-    if u.startswith("//"):
-        u = "https:" + u
-    if "jdbstatic.com" in u and "/thumbs/" in u:
-        u = u.replace("/thumbs/", "/covers/")
-    u = re.sub(r"ps\.(jpe?g)(\?.*)?$", r"pl.\1\2", u, flags=re.IGNORECASE)
-    u = re.sub(r"_s\.(jpe?g)(\?.*)?$", r"_b.\1\2", u, flags=re.IGNORECASE)
-    return u
 
 
 def _looks_like_image_url(url: str) -> bool:
@@ -242,8 +230,10 @@ def parse_javdb_detail(html: str, code: str = "", source_url: str = "") -> Movie
                     gender = "female"
                 elif "♂" in sym or "male" in " ".join(sib.get("class") or []):
                     gender = "male"
-            elif "female" in " ".join((a.find_next("strong") or Tag(name="x")).get("class") or []):
-                gender = "female"
+            else:
+                strong = a.find_next("strong")
+                if strong is not None and "female" in " ".join(strong.get("class") or []):
+                    gender = "female"
             actresses.append(Actress(name=name, name_original=name, gender=gender))
 
     current_raw = _text(soup.select_one("strong.current-title"))

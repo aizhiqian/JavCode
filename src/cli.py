@@ -7,9 +7,8 @@ import sys
 from .ai import AIClient, AIConfig
 from .enrich import enrich_code
 from .env import ROOT, load_project_env
-from .relationships import actress_index
-from .search import search_library
-from .settings import SettingsStore, apply_effective_proxy
+from .fetchers import SourceFetcher
+from .settings import SettingsStore, resolve_proxy_dict
 from .store import CollectionStore
 
 DEFAULT_DB = ROOT / "data" / "collection.db"
@@ -48,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     store = CollectionStore(args.db)
     settings = SettingsStore(args.db)
-    apply_effective_proxy(settings)
+    proxies = resolve_proxy_dict(settings)
 
     if args.cmd == "ai-status":
         print(
@@ -61,12 +60,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "enrich":
-        ai_client = None if args.no_ai else AIClient.from_settings(settings)
+        ai_client = None if args.no_ai else AIClient.from_settings(settings, proxies=proxies)
         result = enrich_code(
             args.code,
             store=store,
             persist=not args.no_persist,
             prefer=args.prefer,
+            fetcher=SourceFetcher(proxies=proxies),
             ai_client=ai_client,
         )
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
@@ -78,8 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "search":
-        found = search_library(
-            store.list_all(),
+        found = store.search(
             code=args.code or None,
             actress=args.actress or None,
             tag=args.tag or None,
@@ -89,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "actresses":
-        print(json.dumps({"items": actress_index(store.list_all())}, ensure_ascii=False, indent=2))
+        print(json.dumps({"items": store.actress_index()}, ensure_ascii=False, indent=2))
         return 0
 
     if args.cmd == "delete":

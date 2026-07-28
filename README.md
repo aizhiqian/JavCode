@@ -15,6 +15,8 @@
 
 ## 快速开始
 
+### 本地 Python
+
 ```bash
 cd /root/javcode
 python3 -m venv .venv
@@ -36,6 +38,48 @@ export JAVCODE_AI_API_KEY=你的密钥
 .venv/bin/python -m src search --tag 美乳
 ```
 
+### Docker Compose 部署
+
+1. 复制环境变量（可选，也可在 Web 设置页配置 AI / 代理）：
+
+```bash
+cp .env.example .env
+# 编辑 .env 填入 JAVCODE_AI_API_KEY 等
+```
+
+2. **使用已发布镜像**（推荐；镜像在 GitHub Actions 中**手动**构建，见下文）：
+
+```bash
+# 公开包可直接拉；若 GHCR 包为 private，需先登录：
+# echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+
+docker compose pull
+docker compose up -d
+```
+
+3. **或本地构建**（不依赖 GHCR）：
+
+```bash
+docker compose up -d --build
+```
+
+访问 http://127.0.0.1:8765/ 。数据目录 `./data` 挂载到容器，SQLite 与设置会持久化。
+
+```bash
+docker compose logs -f      # 日志
+docker compose down         # 停止
+```
+
+### 手动构建并推送镜像（GitHub Actions）
+
+推送代码**不会**自动构建镜像。需要时在仓库页面：
+
+1. **Actions** → **Build Docker Image** → **Run workflow**
+2. 可选：自定义 tag（默认 `latest`）；`push` 默认开启
+3. 产物推送到 GHCR：`ghcr.io/<owner>/javcode:<tag>` 与 `…:sha-<短 SHA>`
+
+工作流文件：`.github/workflows/docker-image.yml`（仅 `workflow_dispatch`）。
+
 环境变量：
 
 | 变量 | 说明 |
@@ -47,7 +91,7 @@ export JAVCODE_AI_API_KEY=你的密钥
 | `JAVCODE_AI_MODEL` | 模型名，默认 `grok-2-latest` |
 | `JAVCODE_AI_ENABLED` | `0` 强制关闭 AI；有 Key 时默认开启 |
 | `JAVCODE_AI_TIMEOUT` | 请求超时秒数（默认 60） |
-| `JAVCODE_PROXY` | 全局 HTTP/HTTPS 代理 |
+| `JAVCODE_PROXY` | 全局代理 URL（抓取 + AI；默认空=直连） |
 | `JAVCODE_ADMIN_USERNAME` / `JAVCODE_ADMIN_PASSWORD` | 首次启动引导管理员 |
 
 ### 管理员与设置
@@ -69,16 +113,20 @@ export JAVCODE_AI_API_KEY=你的密钥
 
 ```
 src/
+  constants.py      # AI 等共享默认值（避免 settings↔ai 循环依赖）
+  env.py            # .env 加载
   fetchers.py       # 在线 HTTP（JavDB / JavLibrary）
   parsers.py        # HTML 解析
-  translate.py      # 繁体→简体
+  media.py          # 封面 URL 规范化（唯一实现）
+  labels.py         # to_simplified / 标签去重合并
+  translate.py      # 条目规范化（简繁 + cover + labels）
   classify.py       # 规则分类 / 标签
-  ai.py             # AI 翻译 / 分类
+  ai.py             # AI 翻译 / 分类（AIConfig.resolve 单路径）
   enrich.py         # enrichment 管道
-  store.py          # SQLite
-  settings.py       # 设置覆盖
+  store.py          # SQLite；写/读边界规范化 cover；search 门面
+  settings.py       # 设置覆盖；resolve_proxy_dict（仅入口调用，注入 fetcher/AI）
   auth.py           # 管理员鉴权
-  search.py         # 过滤
+  search.py         # 过滤（由 store 调用）
   relationships.py  # 女优索引 / 拼音
   server.py         # Flask API + 静态 UI
 public/

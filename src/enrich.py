@@ -166,7 +166,8 @@ def enrich_code(
         return EnrichResult(ok=False, error="无效番号", log=["empty code"])
 
     logs.append(f"enrich_code {code_n} prefer={prefer}")
-    fetcher = fetcher or SourceFetcher()
+    # Default is direct (no proxy). Callers that need proxy must inject a configured fetcher.
+    fetcher = fetcher or SourceFetcher(proxies={})
     live: FetchResult = fetcher.fetch(code_n, prefer=prefer)
     logs.append(f"live result ok={live.ok} source={live.source} error={live.error!r} url={live.url}")
 

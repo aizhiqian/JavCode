@@ -7,7 +7,6 @@ from urllib.parse import quote
 
 import requests
 
-from .env import apply_proxy_from_env
 from .models import MovieEntry
 from .normalize import normalize_code
 from .parsers import (
@@ -58,9 +57,15 @@ class SourceFetcher:
         *,
         proxies: dict[str, str] | None = None,
     ) -> None:
+        """HTTP client for JavDB / JavLibrary. Proxy is injected; never self-resolved.
+
+        proxies=None or {} means direct (trust_env=False — ambient HTTP_PROXY ignored).
+        Composition roots (cli/server) call resolve_proxy_dict and pass the result.
+        """
         self.session = session or requests.Session()
+        self.session.trust_env = False
         self.session.headers.update(DEFAULT_HEADERS)
-        resolved = proxies if proxies is not None else apply_proxy_from_env()
+        resolved = dict(proxies) if proxies else {}
         if resolved:
             self.session.proxies.update(resolved)
         self.timeout = timeout

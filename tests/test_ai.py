@@ -9,8 +9,8 @@ from src.ai import (
     ai_enrich_entry,
     apply_ai_result,
     extract_json_object,
-    merge_labels,
 )
+from src.labels import merge_labels
 from src.enrich import enrich_from_html, post_process
 from src.models import Actress, MovieEntry
 from src.parsers import parse_javdb_detail
@@ -248,14 +248,29 @@ def test_merge_labels_dedup():
     assert merge_labels(["美乳", "剧情"], ["美乳", "NTR"]) == ["美乳", "剧情", "NTR"]
 
 
-def test_config_from_env(monkeypatch):
+def test_config_resolve_single_path(monkeypatch):
     monkeypatch.setenv("JAVCODE_AI_API_KEY", "abc")
     monkeypatch.setenv("JAVCODE_AI_BASE_URL", "https://api.openai.com/v1")
     monkeypatch.setenv("JAVCODE_AI_MODEL", "gpt-4o-mini")
-    cfg = AIConfig.from_env()
+    cfg = AIConfig.resolve(None)
     assert cfg.available
     assert cfg.model == "gpt-4o-mini"
     assert "openai.com" in cfg.base_url
     monkeypatch.setenv("JAVCODE_AI_ENABLED", "0")
-    cfg2 = AIConfig.from_env()
+    cfg2 = AIConfig.resolve(None)
     assert cfg2.available is False
+
+
+def test_client_uses_injected_proxies_only(monkeypatch):
+    """Leaf clients never self-resolve; env proxy is ignored unless injected."""
+    monkeypatch.setenv("JAVCODE_PROXY", "http://env-proxy:1")
+    bare = AIClient.from_settings(None)
+    assert bare._proxies == {}
+    injected = AIClient.from_settings(
+        None,
+        proxies={"http": "http://injected:9", "https": "http://injected:9"},
+    )
+    assert injected._proxies == {
+        "http": "http://injected:9",
+        "https": "http://injected:9",
+    }

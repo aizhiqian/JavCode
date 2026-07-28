@@ -6,22 +6,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .labels import dedupe_labels
+from .media import normalize_cover_url
 from .models import MovieEntry
 from .normalize import normalize_code
-from .parsers import normalize_cover_url
+from .relationships import actress_index
+from .search import label_index, search_library
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _normalize_labels(items: list[Any] | None) -> list[str]:
-    out: list[str] = []
-    for raw in items or []:
-        lab = str(raw).strip()
-        if lab and lab not in out:
-            out.append(lab)
-    return out
 
 
 class CollectionStore:
@@ -67,12 +61,14 @@ class CollectionStore:
         code = normalize_code(entry.code)
         if not code:
             raise ValueError("code required")
+        # Store owns cover canonicalization (write path).
+        cover = normalize_cover_url(entry.cover_url or "")
         now = _utc_now()
         payload = (
             code,
             entry.title or "",
             entry.title_original or "",
-            entry.cover_url or "",
+            cover,
             entry.release_date or "",
             entry.duration_minutes,
             entry.studio or "",
@@ -126,6 +122,28 @@ class CollectionStore:
             rows = conn.execute("SELECT * FROM movies ORDER BY created_at DESC, id DESC").fetchall()
         return [self._row_to_entry(r) for r in rows]
 
+    def search(
+        self,
+        *,
+        code: str | None = None,
+        actress: str | None = None,
+        tag: str | None = None,
+        query: str | None = None,
+    ) -> list[MovieEntry]:
+        return search_library(
+            self.list_all(),
+            code=code,
+            actress=actress,
+            tag=tag,
+            query=query,
+        )
+
+    def label_index(self) -> dict:
+        return label_index(self.list_all())
+
+    def actress_index(self) -> list[dict]:
+        return actress_index(self.list_all())
+
     def delete(self, code: str) -> bool:
         code_n = normalize_code(code)
         with self._connect() as conn:
@@ -144,9 +162,9 @@ class CollectionStore:
             return None
         changes: dict[str, Any] = {}
         if tags is not None:
-            changes["tags"] = _normalize_labels(tags)
+            changes["tags"] = dedupe_labels([str(x) for x in tags], simplify=True)
         if categories is not None:
-            changes["categories"] = _normalize_labels(categories)
+            changes["categories"] = dedupe_labels([str(x) for x in categories], simplify=True)
         if not changes:
             return entry
         return self.upsert(entry.evolve(**changes))
@@ -157,5 +175,6 @@ class CollectionStore:
         data["tags"] = json.loads(data.pop("tags_json") or "[]")
         data["categories"] = json.loads(data.pop("categories_json") or "[]")
         data["actresses"] = json.loads(data.pop("actresses_json") or "[]")
+        # Legacy rows may still hold thumb URLs; upgrade in memory (persist on next upsert).
         data["cover_url"] = normalize_cover_url(data.get("cover_url") or "")
         return MovieEntry.from_dict(data)

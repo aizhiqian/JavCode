@@ -1,0 +1,65 @@
+# Manually build & push the container image to GHCR.
+# Not triggered on push/PR — open Actions → "Build Docker Image" → Run workflow.
+name: Build Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (in addition to latest and the short SHA)"
+        required: false
+        default: "latest"
+      push:
+        description: "Push image to ghcr.io"
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  # lowercase owner/repo for GHCR
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: inputs.push
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize image name
+        id: meta
+        run: |
+          name="$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=${name}" >> "$GITHUB_OUTPUT"
+          sha="$(echo "${{ github.sha }}" | cut -c1-7)"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          tag="${{ inputs.tag }}"
+          tag="${tag:-latest}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ inputs.push }}
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:sha-${{ steps.meta.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

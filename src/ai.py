@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import requests
 
-from .env import apply_proxy_from_env, parse_bool
+from .constants import DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL
+from .env import parse_bool
+from .labels import merge_labels, to_simplified
 from .models import Actress, MovieEntry
-from .translate import to_simplified
+
+if TYPE_CHECKING:
+    from .settings import SettingsStore
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_BASE_URL = "https://api.x.ai/v1"
-DEFAULT_MODEL = "grok-2-latest"
 
 SYSTEM_PROMPT = """你是日本成人影片元数据助手。根据给定的番号原始字段，输出严格 JSON（不要 markdown 代码块）：
 {
@@ -36,8 +36,8 @@ SYSTEM_PROMPT = """你是日本成人影片元数据助手。根据给定的番�
 @dataclass
 class AIConfig:
     api_key: str = ""
-    base_url: str = DEFAULT_BASE_URL
-    model: str = DEFAULT_MODEL
+    base_url: str = DEFAULT_AI_BASE_URL
+    model: str = DEFAULT_AI_MODEL
     timeout: float = 60.0
     enabled: bool = True
 
@@ -46,36 +46,13 @@ class AIConfig:
         return bool(self.enabled and self.api_key.strip())
 
     @classmethod
-    def from_env(cls) -> "AIConfig":
-        key = (
-            os.environ.get("JAVCODE_AI_API_KEY")
-            or os.environ.get("XAI_API_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-            or ""
-        ).strip()
-        base = (
-            os.environ.get("JAVCODE_AI_BASE_URL")
-            or os.environ.get("OPENAI_BASE_URL")
-            or DEFAULT_BASE_URL
-        ).rstrip("/")
-        model = (
-            os.environ.get("JAVCODE_AI_MODEL")
-            or os.environ.get("OPENAI_MODEL")
-            or DEFAULT_MODEL
-        )
-        enabled_flag = parse_bool(os.environ.get("JAVCODE_AI_ENABLED"), default=None)
-        enabled = bool(key) if enabled_flag is None else enabled_flag
-        timeout = float(os.environ.get("JAVCODE_AI_TIMEOUT", "60") or "60")
-        return cls(api_key=key, base_url=base, model=model, timeout=timeout, enabled=enabled)
-
-    @classmethod
-    def resolve(cls, settings_store: Any = None) -> "AIConfig":
+    def resolve(cls, settings_store: "SettingsStore | None" = None) -> "AIConfig":
         from .settings import effective_ai_fields
 
         fields = effective_ai_fields(settings_store)
         key = fields["ai_api_key"].value.strip()
-        base = (fields["ai_base_url"].value or DEFAULT_BASE_URL).rstrip("/")
-        model = fields["ai_model"].value or DEFAULT_MODEL
+        base = (fields["ai_base_url"].value or DEFAULT_AI_BASE_URL).rstrip("/")
+        model = fields["ai_model"].value or DEFAULT_AI_MODEL
         enabled_raw = fields["ai_enabled"].value
         enabled_flag = parse_bool(enabled_raw, default=None) if enabled_raw != "" else None
         enabled = bool(key) if enabled_flag is None else enabled_flag
@@ -140,17 +117,6 @@ def extract_json_object(text: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("AI JSON root must be object")
     return data
-
-
-def merge_labels(base: list[str], extra: list[str], *, limit: int = 24) -> list[str]:
-    out: list[str] = []
-    for item in list(base or []) + list(extra or []):
-        lab = to_simplified(str(item).strip()) if item else ""
-        if lab and lab not in out:
-            out.append(lab)
-        if len(out) >= limit:
-            break
-    return out
 
 
 def _norm_key(s: str) -> str:
@@ -240,35 +206,38 @@ class AIClient:
         post: Callable[..., requests.Response] | None = None,
         proxies: dict[str, str] | None = None,
     ) -> None:
-        self.config = config
-        self._proxies = proxies if proxies is not None else apply_proxy_from_env()
-        self._post = post or requests.post
+        """AI HTTP client. Proxy is injected; never self-resolved.
 
-    @classmethod
-    def from_env(
-        cls,
-        *,
-        post: Callable[..., requests.Response] | None = None,
-        proxies: dict[str, str] | None = None,
-    ) -> "AIClient":
-        return cls(AIConfig.from_env(), post=post, proxies=proxies)
+        proxies=None or {} means direct. Callers pass resolve_proxy_dict(...) from the root.
+        """
+        self.config = config
+        self._proxies = dict(proxies) if proxies else {}
+        self._post = post
 
     @classmethod
     def from_settings(
         cls,
-        settings_store: Any = None,
+        settings_store: "SettingsStore | None" = None,
         *,
         post: Callable[..., requests.Response] | None = None,
         proxies: dict[str, str] | None = None,
     ) -> "AIClient":
-        from .settings import apply_effective_proxy
-
-        resolved_proxies = proxies if proxies is not None else apply_effective_proxy(settings_store)
-        return cls(AIConfig.resolve(settings_store), post=post, proxies=resolved_proxies or None)
+        """Build from settings/env AI config. Proxy must be passed in (default direct)."""
+        return cls(AIConfig.resolve(settings_store), post=post, proxies=proxies)
 
     @property
     def available(self) -> bool:
         return self.config.available
+
+    def _http_post(self, url: str, **kwargs: Any) -> requests.Response:
+        if self._post is not None:
+            return self._post(url, **kwargs)
+        # trust_env=False so empty proxies truly means direct (no ambient HTTP_PROXY).
+        with requests.Session() as session:
+            session.trust_env = False
+            if self._proxies:
+                session.proxies.update(self._proxies)
+            return session.post(url, **kwargs)
 
     def chat_json(self, user_content: str) -> dict[str, Any]:
         if not self.config.available:
@@ -286,14 +255,12 @@ class AIClient:
                 {"role": "user", "content": user_content},
             ],
         }
-        kwargs: dict[str, Any] = {
-            "headers": headers,
-            "json": body,
-            "timeout": self.config.timeout,
-        }
-        if self._proxies:
-            kwargs["proxies"] = self._proxies
-        resp = self._post(url, **kwargs)
+        resp = self._http_post(
+            url,
+            headers=headers,
+            json=body,
+            timeout=self.config.timeout,
+        )
         if resp.status_code >= 400:
             raise RuntimeError(f"AI API HTTP {resp.status_code}: {resp.text[:300]}")
         payload = resp.json()

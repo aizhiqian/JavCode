@@ -16,8 +16,6 @@ def _isolate_ai_env(monkeypatch):
         "JAVCODE_AI_MODEL",
         "JAVCODE_AI_TIMEOUT",
         "JAVCODE_PROXY",
-        "JAVCODE_HTTP_PROXY",
-        "JAVCODE_HTTPS_PROXY",
         "JAVCODE_ADMIN_USERNAME",
         "JAVCODE_ADMIN_PASSWORD",
     ):

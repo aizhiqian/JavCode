@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-import os
-
 import pytest
+
+# Load project .env once so integration tests can see JAVCODE_DB (MySQL, etc.).
+# AI-related keys are still cleared per-test below.
+from src.env import load_project_env
+
+load_project_env()
 
 
 @pytest.fixture(autouse=True)

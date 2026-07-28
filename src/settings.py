@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import os
 import secrets
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .constants import DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL
+from .db import Database, open_database
 
 SETTING_KEYS = (
     "ai_api_key",
@@ -32,76 +32,62 @@ class ResolvedValue:
 
 
 class SettingsStore:
-    def __init__(self, db_path: str | Path) -> None:
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+    """App settings / admin meta (same DB as collection; multi-backend)."""
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        return conn
+    def __init__(self, db: Database | str | Path) -> None:
+        self.db = db if isinstance(db, Database) else open_database(db)
 
-    def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS app_meta (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL DEFAULT ''
-                )
-                """
-            )
+    def _key_col(self) -> str:
+        # Historical column name `key`; MySQL needs quoting (reserved word).
+        return self.db.ident("key")
 
     def get(self, key: str, default: str = "") -> str:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT value FROM app_meta WHERE key = ?", (key,)
-            ).fetchone()
+        row = self.db.fetchone(
+            f"SELECT value FROM app_meta WHERE {self._key_col()} = ?",
+            (key,),
+        )
         if row is None:
             return default
-        return row["value"] if row["value"] is not None else default
+        val = row.get("value")
+        return val if val is not None else default
 
     def set(self, key: str, value: str) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO app_meta (key, value) VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                """,
-                (key, value if value is not None else ""),
-            )
+        self.db.upsert_meta(key, value if value is not None else "")
 
     def delete(self, key: str) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM app_meta WHERE key = ?", (key,))
+        self.db.execute(
+            f"DELETE FROM app_meta WHERE {self._key_col()} = ?",
+            (key,),
+        )
 
     def get_many(self, keys: list[str] | tuple[str, ...]) -> dict[str, str]:
+        if not keys:
+            return {}
+        kcol = self._key_col()
+        placeholders = ", ".join(["?"] * len(keys))
+        rows = self.db.fetchall(
+            f"SELECT {kcol} AS meta_key, value FROM app_meta "
+            f"WHERE {kcol} IN ({placeholders})",
+            tuple(keys),
+        )
         out: dict[str, str] = {}
-        with self._connect() as conn:
-            for key in keys:
-                row = conn.execute(
-                    "SELECT value FROM app_meta WHERE key = ?", (key,)
-                ).fetchone()
-                if row is not None and row["value"] is not None:
-                    out[key] = row["value"]
+        for row in rows:
+            k = row.get("meta_key")
+            v = row.get("value")
+            if k is not None and v is not None:
+                out[str(k)] = v
         return out
 
     def set_many(self, mapping: dict[str, str | None]) -> None:
-        with self._connect() as conn:
+        # Single transaction so a settings save is all-or-nothing.
+        with self.db.transaction():
             for key, value in mapping.items():
                 if value is None:
                     continue
                 if value == "":
-                    conn.execute("DELETE FROM app_meta WHERE key = ?", (key,))
+                    self.delete(key)
                 else:
-                    conn.execute(
-                        """
-                        INSERT INTO app_meta (key, value) VALUES (?, ?)
-                        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                        """,
-                        (key, value),
-                    )
+                    self.set(key, value)
 
     def ensure_secret_key(self) -> str:
         existing = self.get(META_SECRET_KEY, "")
@@ -115,15 +101,19 @@ class SettingsStore:
         return bool(self.get(META_ADMIN_PASSWORD_HASH, "").strip())
 
     def admin_username(self) -> str:
-        return self.get(META_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME).strip() or DEFAULT_ADMIN_USERNAME
+        return (
+            self.get(META_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME).strip()
+            or DEFAULT_ADMIN_USERNAME
+        )
 
     def admin_password_hash(self) -> str:
         return self.get(META_ADMIN_PASSWORD_HASH, "")
 
     def set_admin(self, username: str, password_hash: str) -> None:
         name = (username or DEFAULT_ADMIN_USERNAME).strip() or DEFAULT_ADMIN_USERNAME
-        self.set(META_ADMIN_USERNAME, name)
-        self.set(META_ADMIN_PASSWORD_HASH, password_hash)
+        with self.db.transaction():
+            self.set(META_ADMIN_USERNAME, name)
+            self.set(META_ADMIN_PASSWORD_HASH, password_hash)
 
     def bootstrap_admin_from_env(self) -> bool:
         if self.is_admin_configured():
@@ -283,19 +273,28 @@ def update_settings_from_payload(
         raw = data[key]
         if raw is None:
             continue
-        mapping[key] = str(raw).strip() if not isinstance(raw, bool) else ("1" if raw else "0")
-
-    if mapping:
-        store.set_many(mapping)
-
-    if "admin_username" in data and data["admin_username"] is not None:
-        name = str(data["admin_username"]).strip() or DEFAULT_ADMIN_USERNAME
-        store.set(META_ADMIN_USERNAME, name)
+        mapping[key] = (
+            str(raw).strip() if not isinstance(raw, bool) else ("1" if raw else "0")
+        )
 
     new_password = data.get("admin_password") or data.get("new_password")
+    password_hash: str | None = None
     if new_password is not None and str(new_password).strip() != "":
         from .auth import hash_password
 
-        store.set(META_ADMIN_PASSWORD_HASH, hash_password(str(new_password)))
+        password_hash = hash_password(str(new_password))
+
+    admin_name: str | None = None
+    if "admin_username" in data and data["admin_username"] is not None:
+        admin_name = str(data["admin_username"]).strip() or DEFAULT_ADMIN_USERNAME
+
+    if mapping or admin_name is not None or password_hash is not None:
+        with store.db.transaction():
+            if mapping:
+                store.set_many(mapping)
+            if admin_name is not None:
+                store.set(META_ADMIN_USERNAME, admin_name)
+            if password_hash is not None:
+                store.set(META_ADMIN_PASSWORD_HASH, password_hash)
 
     return settings_public_view(store)

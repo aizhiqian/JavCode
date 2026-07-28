@@ -8,7 +8,7 @@
 - 自动分类与标签增强（片商、前缀、共演、年份等）
 - 繁体 → 简体（zhconv）；日文等需 **AI** 翻译为简体中文
 - **AI API**：配置 Key 后，用大模型翻译标题/女优、分类、打标签（OpenAI 兼容，含 xAI Grok）
-- 本地 SQLite 收藏库
+- 收藏库：默认 **SQLite**，可选 **MySQL** / **PostgreSQL**
 - 搜索：番号、女优、标签
 - 资料库 / 女优列表分页
 - 详情页观看入口（MissAV / Jable 按番号搜索）
@@ -21,6 +21,8 @@
 cd /root/javcode
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+# 使用 MySQL / PostgreSQL 时再装驱动：
+# .venv/bin/pip install -r requirements-db.txt
 
 # 启动 Web UI（默认 http://127.0.0.1:8765/）
 .venv/bin/python run.py
@@ -63,12 +65,27 @@ docker compose up -d
 docker compose up -d --build
 ```
 
-访问 http://127.0.0.1:8765/ 。数据目录 `./data` 挂载到容器，SQLite 与设置会持久化。
+访问 http://127.0.0.1:8765/ 。默认数据目录 `./data` 挂载到容器（SQLite）；设置与收藏写入同一数据库。
 
 ```bash
 docker compose logs -f      # 日志
 docker compose down         # 停止
 ```
+
+**使用 MySQL / PostgreSQL：**
+
+```bash
+# 一并启动官方 MySQL 8 容器，应用连到它
+# （compose 服务名 mysql/postgres 与 localhost 默认不强制 TLS）
+JAVCODE_DB=mysql://javcode:javcode@mysql:3306/javcode \
+  docker compose --profile mysql up -d
+
+# 或 PostgreSQL 16
+JAVCODE_DB=postgresql://javcode:javcode@postgres:5432/javcode \
+  docker compose --profile postgres up -d
+```
+
+也可把 `JAVCODE_DB` 写进 `.env`，指向 Compose 内或**外部**数据库（如 Aiven）。首次连接会自动建表（`movies` / `app_meta`）。**远程 host 默认要求 TLS**；本地 / compose 服务名默认明文。可用 `?ssl=disable` 或 `?sslmode=require` 覆盖。
 
 ### 手动构建并推送镜像（GitHub Actions）
 
@@ -84,7 +101,7 @@ docker compose down         # 停止
 
 | 变量 | 说明 |
 |------|------|
-| `JAVCODE_DB` | SQLite 路径（默认 `data/collection.db`） |
+| `JAVCODE_DB` | 数据库位置：SQLite 路径（默认 `data/collection.db`），或 `mysql://…` / `postgresql://…` URL（远程默认 TLS；localhost/compose 服务名默认明文；`?ssl=` / `?sslmode=` 可覆盖） |
 | `JAVCODE_HOST` / `JAVCODE_PORT` | 服务监听 |
 | `JAVCODE_AI_API_KEY` | AI API Key（也识别 `XAI_API_KEY` / `OPENAI_API_KEY`） |
 | `JAVCODE_AI_BASE_URL` | Chat Completions 基址，默认 `https://api.x.ai/v1` |
@@ -123,7 +140,8 @@ src/
   classify.py       # 规则分类 / 标签
   ai.py             # AI 翻译 / 分类（AIConfig.resolve 单路径）
   enrich.py         # enrichment 管道
-  store.py          # SQLite；写/读边界规范化 cover；search 门面
+  db.py             # SQLite / MySQL / PostgreSQL 连接与 schema
+  store.py          # 收藏持久化；写/读边界规范化 cover；search 门面
   settings.py       # 设置覆盖；resolve_proxy_dict（仅入口调用，注入 fetcher/AI）
   auth.py           # 管理员鉴权
   search.py         # 过滤（由 store 调用）

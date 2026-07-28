@@ -8,8 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     JAVCODE_PORT=8765 \
     JAVCODE_DB=/app/data/collection.db
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-db.txt ./
+# Include optional DB drivers so mysql:// and postgresql:// work in the image.
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-db.txt
 
 COPY run.py .
 COPY src/ src/

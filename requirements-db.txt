@@ -1,0 +1,4 @@
+# Optional database drivers for MySQL / PostgreSQL backends.
+#   pip install -r requirements.txt -r requirements-db.txt
+pymysql>=1.1
+psycopg[binary]>=3.1

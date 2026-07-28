@@ -6,3 +6,8 @@ zhconv>=1.4
 pypinyin>=0.51
 pytest>=8.0
 python-dotenv
+
+# Server DB drivers are optional at import-time (only needed for mysql:// / postgresql://).
+# Install explicitly when using those backends, or use requirements-db.txt.
+# pymysql>=1.1
+# psycopg[binary]>=3.1

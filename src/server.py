@@ -15,6 +15,7 @@ from .auth import (
     try_setup,
 )
 from .enrich import EnrichResult, enrich_code
+from .db import DEFAULT_SQLITE_PATH, open_database, resolve_db_location
 from .env import ROOT, load_project_env, parse_bool
 from .fetchers import SourceFetcher
 from .models import MovieEntry
@@ -29,7 +30,7 @@ from .settings import (
 from .store import CollectionStore
 
 PUBLIC = ROOT / "public"
-DEFAULT_DB = ROOT / "data" / "collection.db"
+DEFAULT_DB = DEFAULT_SQLITE_PATH
 
 
 def create_app(
@@ -39,9 +40,11 @@ def create_app(
     ai_client: AIClient | None = None,
 ) -> Flask:
     app = Flask(__name__, static_folder=str(PUBLIC), static_url_path="")
-    db = Path(db_path or os.environ.get("JAVCODE_DB", str(DEFAULT_DB)))
-    store = CollectionStore(db)
-    settings = SettingsStore(db)
+    # JAVCODE_DB: SQLite path, or mysql:// / postgresql:// URL
+    location = resolve_db_location(db_path)
+    database = open_database(location)
+    store = CollectionStore(database)
+    settings = SettingsStore(database)
     settings.bootstrap_admin_from_env()
     app.secret_key = settings.ensure_secret_key()
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
@@ -50,6 +53,12 @@ def create_app(
 
     app.config["STORE"] = store
     app.config["SETTINGS"] = settings
+    app.config["DATABASE"] = database
+
+    @app.teardown_appcontext
+    def _close_db(_exc: object | None = None) -> None:
+        # Drop the request thread's pooled connection so workers don't leak.
+        database.close()
 
     proxies = resolve_proxy_dict(settings)
     if ai_client is None:
@@ -96,12 +105,17 @@ def create_app(
                     "configured": app.config["SETTINGS"].is_admin_configured(),
                 }
             )
+        db = app.config["DATABASE"]
         return jsonify(
             {
                 "ok": True,
                 "version": "1.0.0",
                 "authenticated": True,
                 "configured": True,
+                "storage": {
+                    "backend": db.backend,
+                    "location": db.location,
+                },
                 "ai": _ai_public_status(app),
                 "proxy": proxy_public_status(app.config["SETTINGS"]),
             }

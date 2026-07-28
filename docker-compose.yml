@@ -1,5 +1,21 @@
 # Local / self-hosted deploy.
 # Prefer a prebuilt image from GHCR (built manually via Actions), or build locally.
+#
+# Default (SQLite under ./data):
+#   docker compose up -d
+#
+# MySQL (waits for DB healthy before app starts when profile is on):
+#   JAVCODE_DB=mysql://javcode:javcode@mysql:3306/javcode \
+#     docker compose --profile mysql up -d
+#
+# PostgreSQL:
+#   JAVCODE_DB=postgresql://javcode:javcode@postgres:5432/javcode \
+#     docker compose --profile postgres up -d
+#
+# External / managed DB: set JAVCODE_DB in .env to a mysql:// or postgresql:// URL.
+# TLS is required by default for remote hosts; loopback and compose service
+# names (mysql, postgres, localhost, …) default to plain connections.
+# Override with ?ssl=disable or ?sslmode=require.
 services:
   javcode:
     image: ghcr.io/aizhiqian/javcode:latest
@@ -9,7 +25,7 @@ services:
     ports:
       - "${JAVCODE_PORT:-8765}:8765"
     volumes:
-      # Persist SQLite DB and app settings
+      # Persist SQLite DB (unused when JAVCODE_DB is a server URL)
       - ./data:/app/data
     env_file:
       - path: .env
@@ -17,5 +33,54 @@ services:
     environment:
       JAVCODE_HOST: "0.0.0.0"
       JAVCODE_PORT: "8765"
-      JAVCODE_DB: /app/data/collection.db
+      # SQLite path, or mysql:// / postgresql:// URL
+      JAVCODE_DB: ${JAVCODE_DB:-/app/data/collection.db}
+    depends_on:
+      mysql:
+        condition: service_healthy
+        required: false
+      postgres:
+        condition: service_healthy
+        required: false
     restart: unless-stopped
+
+  mysql:
+    profiles: ["mysql"]
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: javcode
+      MYSQL_USER: javcode
+      MYSQL_PASSWORD: javcode
+      MYSQL_ROOT_PASSWORD: rootpass
+    ports:
+      - "${JAVCODE_MYSQL_PORT:-3306}:3306"
+    volumes:
+      - javcode_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  postgres:
+    profiles: ["postgres"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: javcode
+      POSTGRES_USER: javcode
+      POSTGRES_PASSWORD: javcode
+    ports:
+      - "${JAVCODE_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - javcode_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U javcode -d javcode"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  javcode_mysql_data:
+  javcode_postgres_data:

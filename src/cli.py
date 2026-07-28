@@ -5,18 +5,23 @@ import json
 import sys
 
 from .ai import AIClient, AIConfig
+from .db import DEFAULT_SQLITE_PATH, open_database, resolve_db_location
 from .enrich import enrich_code
-from .env import ROOT, load_project_env
+from .env import load_project_env
 from .fetchers import SourceFetcher
 from .settings import SettingsStore, resolve_proxy_dict
 from .store import CollectionStore
 
-DEFAULT_DB = ROOT / "data" / "collection.db"
+DEFAULT_DB = DEFAULT_SQLITE_PATH
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="个人 AV 收藏 — 番号检索与管理")
-    p.add_argument("--db", default=str(DEFAULT_DB), help="SQLite 路径")
+    p.add_argument(
+        "--db",
+        default=None,
+        help="数据库位置：SQLite 路径，或 mysql:// / postgresql:// URL（默认 JAVCODE_DB 或 data/collection.db）",
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     e = sub.add_parser("enrich", help="检索番号并写入收藏")
@@ -45,8 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     load_project_env()
     args = build_parser().parse_args(argv)
-    store = CollectionStore(args.db)
-    settings = SettingsStore(args.db)
+    location = resolve_db_location(args.db)
+    database = open_database(location)
+    store = CollectionStore(database)
+    settings = SettingsStore(database)
     proxies = resolve_proxy_dict(settings)
 
     if args.cmd == "ai-status":

@@ -12,6 +12,7 @@ from src.db import (
     MOVIE_WRITE_COLS,
     Database,
     _default_ssl_mode,
+    _mysql_decl,
     _schema_statements,
     open_database,
     parse_db_location,
@@ -98,6 +99,23 @@ def test_movie_column_lists_are_consistent():
         # app_meta keeps historical column name `key` (quoted on MySQL).
         assert "key" in ddl
         assert "meta_key" not in ddl
+
+
+def test_mysql_decl_strips_text_defaults():
+    """MySQL errno 1101: TEXT/BLOB/JSON cannot use non-expression DEFAULT."""
+    assert _mysql_decl("TEXT NOT NULL DEFAULT ''") == "TEXT NOT NULL"
+    assert _mysql_decl("TEXT NOT NULL DEFAULT '[]'") == "TEXT NOT NULL"
+    assert _mysql_decl("TEXT NOT NULL UNIQUE") == "VARCHAR(64) NOT NULL"
+    assert _mysql_decl("TEXT NOT NULL") == "VARCHAR(64) NOT NULL"
+    assert _mysql_decl("INTEGER") == "INT"
+    assert _mysql_decl("REAL") == "DOUBLE"
+
+    mysql_ddl = "\n".join(_schema_statements("mysql"))
+    assert "title TEXT NOT NULL" in mysql_ddl
+    assert "DEFAULT ''" not in mysql_ddl
+    assert "DEFAULT '[]'" not in mysql_ddl
+    # code stays short VARCHAR; created_at has no DEFAULT in source decl.
+    assert "code VARCHAR(64) NOT NULL" in mysql_ddl
 
 
 def test_set_many_is_atomic(tmp_path):

@@ -18,6 +18,7 @@ TLS defaults for server backends:
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -260,6 +261,14 @@ def _default_ssl_mode(host: str) -> str:
     return "require"
 
 
+# MySQL/MariaDB reject non-expression DEFAULT on TEXT/BLOB/JSON (errno 1101).
+# Strip `DEFAULT '…'` so long string columns stay TEXT; writers always supply values.
+_MYSQL_TEXT_DEFAULT_RE = re.compile(
+    r"^TEXT(?P<nullability>(?:\s+NOT\s+NULL)?)\s+DEFAULT\s+'[^']*'$",
+    re.IGNORECASE,
+)
+
+
 def _mysql_decl(decl: str) -> str:
     """Mechanical SQLite-ish → MySQL type mapping."""
     out = decl
@@ -274,6 +283,11 @@ def _mysql_decl(decl: str) -> str:
     # Tighten code-sized NOT NULL text without DEFAULT for the unique column.
     if out == "TEXT NOT NULL":
         return "VARCHAR(64) NOT NULL"
+    # Drop illegal TEXT defaults (title, tags_json, …). App always writes columns.
+    m = _MYSQL_TEXT_DEFAULT_RE.match(out.strip())
+    if m:
+        nullability = m.group("nullability") or ""
+        return f"TEXT{nullability}"
     return out
 
 

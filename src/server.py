@@ -47,6 +47,12 @@ def create_app(
     settings = SettingsStore(database)
     settings.bootstrap_admin_from_env()
     app.secret_key = settings.ensure_secret_key()
+    # Warm collection cache at startup so the first catalog page is not a
+    # remote round-trip; ignore failures so a transient DB blip still boots.
+    try:
+        store.list_all()
+    except Exception:
+        pass
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
@@ -56,9 +62,9 @@ def create_app(
     app.config["DATABASE"] = database
 
     @app.teardown_appcontext
-    def _close_db(_exc: object | None = None) -> None:
-        # Drop the request thread's pooled connection so workers don't leak.
-        database.close()
+    def _release_db(_exc: object | None = None) -> None:
+        # SQLite: close. MySQL/PG: return conn to the shared pool.
+        database.release_request()
 
     proxies = resolve_proxy_dict(settings)
     if ai_client is None:
@@ -73,8 +79,13 @@ def create_app(
         proxies_now = resolve_proxy_dict(s)
         app.config["AI_CLIENT"] = AIClient.from_settings(s, proxies=proxies_now)
         app.config["FETCHER"] = SourceFetcher(proxies=proxies_now)
+        # Settings reads may have checked out a conn on this thread.
+        database.release_request()
 
     app.config["RELOAD_RUNTIME"] = _reload_runtime
+    # After all bootstrap reads (admin, secret, proxy, AI, cache warm), return
+    # the connection so Flask worker threads can reuse the pooled TLS session.
+    database.release_request()
 
     @app.before_request
     def _require_auth():

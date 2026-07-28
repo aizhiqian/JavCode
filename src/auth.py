@@ -42,6 +42,7 @@ def logout_user() -> None:
 
 
 def auth_status(store: SettingsStore) -> dict[str, Any]:
+    # Uses in-memory caches on SettingsStore after first hit.
     configured = store.is_admin_configured()
     return {
         "configured": configured,
@@ -57,6 +58,7 @@ def try_login(store: SettingsStore, username: str, password: str) -> tuple[bool,
     want = store.admin_username()
     if (username or "").strip() != want:
         return False, "用户名或密码错误"
+    # Load hash once (cached thereafter); avoid a third remote round-trip.
     if not verify_password(store.admin_password_hash(), password or ""):
         return False, "用户名或密码错误"
     login_user(want)

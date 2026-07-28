@@ -27,6 +27,10 @@ from pathlib import Path
 from typing import Any, Iterator, Literal, Mapping, Sequence
 from urllib.parse import parse_qs, unquote, urlparse
 
+# Idle connections kept for MySQL/PostgreSQL (shared across Flask worker threads).
+# Remote TLS handshakes are ~1s+; a small pool avoids paying that per request.
+_DEFAULT_POOL_SIZE = 4
+
 Backend = Literal["sqlite", "mysql", "postgresql"]
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -292,21 +296,32 @@ def _mysql_decl(decl: str) -> str:
 
 
 class Database:
-    """Thread-local connections + schema + parameterized queries for one backend.
+    """Thread-local checkout + optional shared pool for server backends.
 
     One Database instance should be shared by CollectionStore and SettingsStore.
-    Call close() when a worker thread / request context is done (Flask does this
-    via teardown_appcontext).
+
+    Connection lifecycle:
+      - SQLite: one connection per thread; closed on release_request (file locks).
+      - MySQL / PostgreSQL: shared idle pool across threads. A request borrows a
+        connection onto the thread-local, returns it on release_request. This
+        avoids re-doing remote TLS handshakes on every Flask worker thread.
     """
 
     def __init__(self, config: DbConfig) -> None:
         self.config = config
         self._local = threading.local()
+        self._pool_lock = threading.Lock()
+        self._pool: list[Any] = []
+        self._pool_size = _DEFAULT_POOL_SIZE if config.backend != "sqlite" else 0
+        self._pool_live = 0  # opened conns not yet permanently closed
         if config.backend == "sqlite":
             assert config.path is not None
             config.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_drivers()
         self.init_schema()
+        # Return the schema-init connection to the pool so the first HTTP
+        # request can reuse it instead of opening a second TLS session.
+        self.release_request()
 
     @property
     def backend(self) -> Backend:
@@ -364,6 +379,8 @@ class Database:
             )
             ssl_params: dict[str, Any] | None = None if flag in _FALSEY else {}
 
+            # autocommit=True so plain SELECTs don't pay an extra COMMIT RTT
+            # to remote hosts. Explicit transaction() temporarily disables it.
             return pymysql.connect(
                 host=self.config.host,
                 port=self.config.effective_port,
@@ -372,7 +389,10 @@ class Database:
                 database=self.config.database,
                 charset="utf8mb4",
                 cursorclass=DictCursor,
-                autocommit=False,
+                autocommit=True,
+                connect_timeout=15,
+                read_timeout=60,
+                write_timeout=60,
                 ssl=ssl_params,
             )
 
@@ -384,6 +404,8 @@ class Database:
             "port": self.config.effective_port,
             "dbname": self.config.database,
             "row_factory": dict_row,
+            "autocommit": True,
+            "connect_timeout": 15,
         }
         if self.config.user:
             conninfo["user"] = self.config.user
@@ -403,27 +425,65 @@ class Database:
             conninfo["sslmode"] = flag
         return psycopg.connect(**conninfo)
 
+    def _close_conn(self, conn: Any) -> None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        if self._pool_size > 0:
+            with self._pool_lock:
+                self._pool_live = max(0, self._pool_live - 1)
+
     def _drop_thread_conn(self) -> None:
+        """Discard the connection checked out on this thread (do not re-pool)."""
         conn = getattr(self._local, "conn", None)
         self._local.conn = None
         if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
+            self._close_conn(conn)
+
+    def _set_autocommit(self, conn: Any, enabled: bool) -> None:
+        if self.backend == "mysql":
+            conn.autocommit(enabled)
+        elif self.backend == "postgresql":
+            conn.autocommit = enabled
+        # SQLite: leave default transactional behavior; commit/rollback still used.
+
+    def _ping_ok(self, conn: Any) -> bool:
+        try:
+            if self.backend == "mysql":
+                conn.ping(reconnect=False)
+                return True
+            if self.backend == "postgresql":
+                return not bool(conn.closed)
+            return True
+        except Exception:
+            return False
+
+    def _borrow_from_pool(self) -> Any | None:
+        if self._pool_size <= 0:
+            return None
+        while True:
+            with self._pool_lock:
+                conn = self._pool.pop() if self._pool else None
+            if conn is None:
+                return None
+            if self._ping_ok(conn):
+                return conn
+            self._close_conn(conn)
 
     def _thread_conn(self) -> Any:
         conn = getattr(self._local, "conn", None)
         if conn is not None:
-            try:
-                if self.backend == "mysql":
-                    conn.ping(reconnect=False)
-                elif self.backend == "postgresql" and conn.closed:
-                    raise RuntimeError("closed")
+            if self.backend == "sqlite" or self._ping_ok(conn):
                 return conn
-            except Exception:
-                self._drop_thread_conn()
-        conn = self._open_raw()
+            self._drop_thread_conn()
+
+        conn = self._borrow_from_pool()
+        if conn is None:
+            conn = self._open_raw()
+            if self._pool_size > 0:
+                with self._pool_lock:
+                    self._pool_live += 1
         self._local.conn = conn
         return conn
 
@@ -431,8 +491,8 @@ class Database:
     def transaction(self) -> Iterator[Any]:
         """Nestable transaction. Only the outermost call commits or rolls back.
 
-        All execute/fetch*/upsert_* methods enter this, so multi-write helpers
-        can wrap work in one atomic unit:
+        Writes (execute / upsert_*) enter this. Reads use autocommit so a remote
+        SELECT is one RTT, not SELECT+COMMIT.
             with db.transaction():
                 db.execute(...)
                 db.execute(...)
@@ -442,6 +502,8 @@ class Database:
             self._local.tx_failed = False
         self._local.tx_depth = depth + 1
         conn = self._thread_conn()
+        if depth == 0 and self.backend in ("mysql", "postgresql"):
+            self._set_autocommit(conn, False)
         try:
             yield conn
         except Exception:
@@ -460,6 +522,12 @@ class Database:
                     self._drop_thread_conn()
                     if not failed:
                         raise
+                else:
+                    if self.backend in ("mysql", "postgresql"):
+                        try:
+                            self._set_autocommit(conn, True)
+                        except Exception:
+                            self._drop_thread_conn()
 
     def _cursor_execute(
         self,
@@ -471,6 +539,20 @@ class Database:
         cur.execute(self._sql(sql), tuple(params))
         return cur
 
+    def _read(self, sql: str, params: Sequence[Any] = ()) -> Any:
+        """Run a read query without opening a write transaction / COMMIT."""
+        # Nested inside an explicit transaction: share that connection.
+        if getattr(self._local, "tx_depth", 0) > 0:
+            return self._cursor_execute(self._thread_conn(), sql, params)
+        conn = self._thread_conn()
+        try:
+            return self._cursor_execute(conn, sql, params)
+        except Exception:
+            # Stale pooled connection — drop and retry once.
+            self._drop_thread_conn()
+            conn = self._thread_conn()
+            return self._cursor_execute(conn, sql, params)
+
     def execute(self, sql: str, params: Sequence[Any] = ()) -> int:
         """Run DML/DDL. Returns rowcount when available."""
         with self.transaction() as conn:
@@ -481,21 +563,19 @@ class Database:
                 cur.close()
 
     def fetchone(self, sql: str, params: Sequence[Any] = ()) -> dict[str, Any] | None:
-        with self.transaction() as conn:
-            cur = self._cursor_execute(conn, sql, params)
-            try:
-                row = cur.fetchone()
-            finally:
-                cur.close()
+        cur = self._read(sql, params)
+        try:
+            row = cur.fetchone()
+        finally:
+            cur.close()
         return _row_as_dict(row) if row is not None else None
 
     def fetchall(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
-        with self.transaction() as conn:
-            cur = self._cursor_execute(conn, sql, params)
-            try:
-                rows = cur.fetchall()
-            finally:
-                cur.close()
+        cur = self._read(sql, params)
+        try:
+            rows = cur.fetchall()
+        finally:
+            cur.close()
         return [_row_as_dict(r) for r in rows]
 
     def executemany_script(self, statements: Sequence[str]) -> None:
@@ -569,9 +649,45 @@ class Database:
         self.execute(self._upsert_meta_sql(), (key, value))
 
     def close(self) -> None:
-        """Close the connection for the current thread (if any)."""
+        """Close this thread's connection and drain the shared idle pool."""
         self._drop_thread_conn()
+        if self._pool_size <= 0:
+            return
+        with self._pool_lock:
+            idle = list(self._pool)
+            self._pool.clear()
+        for conn in idle:
+            self._close_conn(conn)
 
+    def release_request(self) -> None:
+        """End-of-request hook: close SQLite; return server conns to the pool.
+
+        Remote MySQL/PostgreSQL TLS handshakes are expensive (~1s+). Returning
+        the connection to a process-wide pool lets the next Flask worker thread
+        reuse it. SQLite file handles are cheap — close each request so tests
+        and short-lived scripts don't leak locks.
+        """
+        if getattr(self._local, "tx_depth", 0) > 0:
+            # Still inside an explicit transaction — leave checked out.
+            return
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            return
+        self._local.conn = None
+        if self.backend == "sqlite" or self._pool_size <= 0:
+            self._close_conn(conn)
+            return
+        # Ensure autocommit is restored before the next borrower sees it.
+        try:
+            self._set_autocommit(conn, True)
+        except Exception:
+            self._close_conn(conn)
+            return
+        with self._pool_lock:
+            if len(self._pool) < self._pool_size:
+                self._pool.append(conn)
+                return
+        self._close_conn(conn)
 
 def _col_decl(col: MovieColumn, backend: Backend) -> str:
     if backend == "mysql":

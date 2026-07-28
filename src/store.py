@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,10 +20,22 @@ def _utc_now() -> str:
 
 
 class CollectionStore:
-    """Movie collection persistence (SQLite / MySQL / PostgreSQL)."""
+    """Movie collection persistence (SQLite / MySQL / PostgreSQL).
+
+    list_all / search / label_index / actress_index share an in-memory cache
+    invalidated on upsert/delete. Remote MySQL round-trips are ~200–400ms; for
+    a personal library this keeps page navigations near-instant after the first
+    load without changing API shapes.
+    """
 
     def __init__(self, db: Database | str | Path) -> None:
         self.db = db if isinstance(db, Database) else open_database(db)
+        self._cache_lock = threading.Lock()
+        self._list_cache: list[MovieEntry] | None = None
+
+    def _invalidate_cache(self) -> None:
+        with self._cache_lock:
+            self._list_cache = None
 
     def upsert(self, entry: MovieEntry) -> MovieEntry:
         code = normalize_code(entry.code)
@@ -48,18 +61,33 @@ class CollectionStore:
             ),
             "created_at": _utc_now(),
         }
-        return self._row_to_entry(self.db.upsert_movie(fields))
+        result = self._row_to_entry(self.db.upsert_movie(fields))
+        self._invalidate_cache()
+        return result
 
     def get_by_code(self, code: str) -> MovieEntry | None:
         code_n = normalize_code(code)
+        with self._cache_lock:
+            cached = self._list_cache
+        if cached is not None:
+            for entry in cached:
+                if entry.code == code_n:
+                    return entry
+            return None
         row = self.db.fetchone("SELECT * FROM movies WHERE code = ?", (code_n,))
         return self._row_to_entry(row) if row else None
 
     def list_all(self) -> list[MovieEntry]:
+        with self._cache_lock:
+            if self._list_cache is not None:
+                return list(self._list_cache)
         rows = self.db.fetchall(
             "SELECT * FROM movies ORDER BY created_at DESC, id DESC"
         )
-        return [self._row_to_entry(r) for r in rows]
+        entries = [self._row_to_entry(r) for r in rows]
+        with self._cache_lock:
+            self._list_cache = entries
+            return list(entries)
 
     def search(
         self,
@@ -85,7 +113,10 @@ class CollectionStore:
 
     def delete(self, code: str) -> bool:
         code_n = normalize_code(code)
-        return self.db.execute("DELETE FROM movies WHERE code = ?", (code_n,)) > 0
+        ok = self.db.execute("DELETE FROM movies WHERE code = ?", (code_n,)) > 0
+        if ok:
+            self._invalidate_cache()
+        return ok
 
     def update_labels(
         self,

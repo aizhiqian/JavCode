@@ -36,6 +36,12 @@ class SettingsStore:
 
     def __init__(self, db: Database | str | Path) -> None:
         self.db = db if isinstance(db, Database) else open_database(db)
+        # Cache rarely-changing admin flags so every API request does not pay a
+        # remote RTT just to check "is admin configured?" in before_request.
+        self._admin_configured: bool | None = None
+        self._admin_username: str | None = None
+        self._admin_password_hash: str | None = None
+        self._secret_key: str | None = None
 
     def _key_col(self) -> str:
         # Historical column name `key`; MySQL needs quoting (reserved word).
@@ -53,12 +59,23 @@ class SettingsStore:
 
     def set(self, key: str, value: str) -> None:
         self.db.upsert_meta(key, value if value is not None else "")
+        self._invalidate_cache_for(key)
 
     def delete(self, key: str) -> None:
         self.db.execute(
             f"DELETE FROM app_meta WHERE {self._key_col()} = ?",
             (key,),
         )
+        self._invalidate_cache_for(key)
+
+    def _invalidate_cache_for(self, key: str) -> None:
+        if key == META_ADMIN_PASSWORD_HASH:
+            self._admin_configured = None
+            self._admin_password_hash = None
+        elif key == META_ADMIN_USERNAME:
+            self._admin_username = None
+        elif key == META_SECRET_KEY:
+            self._secret_key = None
 
     def get_many(self, keys: list[str] | tuple[str, ...]) -> dict[str, str]:
         if not keys:
@@ -90,30 +107,64 @@ class SettingsStore:
                     self.set(key, value)
 
     def ensure_secret_key(self) -> str:
+        if self._secret_key:
+            return self._secret_key
         existing = self.get(META_SECRET_KEY, "")
         if existing:
+            self._secret_key = existing
             return existing
         key = secrets.token_hex(32)
         self.set(META_SECRET_KEY, key)
+        self._secret_key = key
         return key
 
-    def is_admin_configured(self) -> bool:
-        return bool(self.get(META_ADMIN_PASSWORD_HASH, "").strip())
-
-    def admin_username(self) -> str:
-        return (
-            self.get(META_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME).strip()
+    def _load_admin_meta(self) -> None:
+        """Fetch username + password hash in one round-trip when either is cold."""
+        if (
+            self._admin_configured is not None
+            and self._admin_username is not None
+            and self._admin_password_hash is not None
+        ):
+            return
+        meta = self.get_many((META_ADMIN_USERNAME, META_ADMIN_PASSWORD_HASH))
+        pwd = meta.get(META_ADMIN_PASSWORD_HASH, "")
+        name = (
+            meta.get(META_ADMIN_USERNAME, DEFAULT_ADMIN_USERNAME).strip()
             or DEFAULT_ADMIN_USERNAME
         )
+        self._admin_password_hash = pwd
+        self._admin_username = name
+        self._admin_configured = bool(pwd.strip())
+
+    def is_admin_configured(self) -> bool:
+        if self._admin_configured is not None:
+            return self._admin_configured
+        self._load_admin_meta()
+        assert self._admin_configured is not None
+        return self._admin_configured
+
+    def admin_username(self) -> str:
+        if self._admin_username is not None:
+            return self._admin_username
+        self._load_admin_meta()
+        assert self._admin_username is not None
+        return self._admin_username
 
     def admin_password_hash(self) -> str:
-        return self.get(META_ADMIN_PASSWORD_HASH, "")
+        if self._admin_password_hash is not None:
+            return self._admin_password_hash
+        self._load_admin_meta()
+        assert self._admin_password_hash is not None
+        return self._admin_password_hash
 
     def set_admin(self, username: str, password_hash: str) -> None:
         name = (username or DEFAULT_ADMIN_USERNAME).strip() or DEFAULT_ADMIN_USERNAME
         with self.db.transaction():
             self.set(META_ADMIN_USERNAME, name)
             self.set(META_ADMIN_PASSWORD_HASH, password_hash)
+        self._admin_username = name
+        self._admin_password_hash = password_hash
+        self._admin_configured = bool(password_hash.strip())
 
     def bootstrap_admin_from_env(self) -> bool:
         if self.is_admin_configured():
@@ -136,9 +187,13 @@ def resolve_setting(
     *,
     env_names: tuple[str, ...] = (),
     default: str = "",
+    cached: dict[str, str] | None = None,
 ) -> ResolvedValue:
     if store is not None:
-        raw = store.get(key, "")
+        if cached is not None:
+            raw = cached.get(key, "")
+        else:
+            raw = store.get(key, "")
         if raw is not None and str(raw).strip() != "":
             return ResolvedValue(value=str(raw), source="settings")
     for name in env_names:
@@ -148,35 +203,44 @@ def resolve_setting(
     return ResolvedValue(value=default, source="default")
 
 
-def effective_ai_fields(store: SettingsStore | None) -> dict[str, ResolvedValue]:
+def effective_ai_fields(
+    store: SettingsStore | None,
+    *,
+    cached: dict[str, str] | None = None,
+) -> dict[str, ResolvedValue]:
     key = resolve_setting(
         store,
         "ai_api_key",
         env_names=("JAVCODE_AI_API_KEY", "XAI_API_KEY", "OPENAI_API_KEY"),
+        cached=cached,
     )
     base = resolve_setting(
         store,
         "ai_base_url",
         env_names=("JAVCODE_AI_BASE_URL", "OPENAI_BASE_URL"),
         default=DEFAULT_AI_BASE_URL,
+        cached=cached,
     )
     model = resolve_setting(
         store,
         "ai_model",
         env_names=("JAVCODE_AI_MODEL", "OPENAI_MODEL"),
         default=DEFAULT_AI_MODEL,
+        cached=cached,
     )
     enabled = resolve_setting(
         store,
         "ai_enabled",
         env_names=("JAVCODE_AI_ENABLED",),
         default="",
+        cached=cached,
     )
     timeout = resolve_setting(
         store,
         "ai_timeout",
         env_names=("JAVCODE_AI_TIMEOUT",),
         default="60",
+        cached=cached,
     )
     return {
         "ai_api_key": key,
@@ -187,13 +251,18 @@ def effective_ai_fields(store: SettingsStore | None) -> dict[str, ResolvedValue]
     }
 
 
-def effective_proxy(store: SettingsStore | None) -> ResolvedValue:
+def effective_proxy(
+    store: SettingsStore | None,
+    *,
+    cached: dict[str, str] | None = None,
+) -> ResolvedValue:
     """Proxy URL: settings override → JAVCODE_PROXY → empty (direct)."""
     return resolve_setting(
         store,
         "proxy",
         env_names=("JAVCODE_PROXY",),
         default="",
+        cached=cached,
     )
 
 
@@ -227,9 +296,10 @@ def proxy_public_status(store: SettingsStore | None = None) -> dict[str, Any]:
 
 
 def settings_public_view(store: SettingsStore) -> dict[str, Any]:
-    fields = effective_ai_fields(store)
-    proxy = effective_proxy(store)
+    # One round-trip for all setting keys (critical on remote MySQL).
     stored = store.get_many(SETTING_KEYS)
+    fields = effective_ai_fields(store, cached=stored)
+    proxy = effective_proxy(store, cached=stored)
 
     def pack(key: str, rv: ResolvedValue) -> dict[str, Any]:
         return {

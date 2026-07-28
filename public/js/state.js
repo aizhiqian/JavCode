@@ -4,6 +4,8 @@ export var ACTRESS_INITIALS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 export var state = {
   movies: [],
+  /** filterKey last successfully loaded into movies; null = need fetch. */
+  moviesFilterKey: null,
   actresses: [],
   view: "catalog",
   selectedCode: null,
@@ -18,4 +20,10 @@ export var state = {
 
 export function $(sel) {
   return document.querySelector(sel);
+}
+
+/** Drop in-memory catalog rows so the next catalog entry refetches. */
+export function invalidateCatalog() {
+  state.movies = [];
+  state.moviesFilterKey = null;
 }

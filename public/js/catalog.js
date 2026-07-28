@@ -1,6 +1,14 @@
 import { state, $, CATALOG_PAGE_SIZE } from "./state.js";
 import { api } from "./api.js";
-import { goCatalog, goDetail, navigate, showView } from "./router.js";
+import {
+  goCatalog,
+  goCatalogPage,
+  goDetail,
+  navigate,
+  normalizeFilter,
+  normalizePage,
+  showView,
+} from "./router.js";
 import {
   coverHtml,
   escapeAttr,
@@ -10,7 +18,13 @@ import {
   renderPager,
 } from "./util.js";
 
+function filterKey(f) {
+  f = normalizeFilter(f);
+  return f.q + "\x1e" + f.actress + "\x1e" + f.tag;
+}
+
 export function loadMovies() {
+  var key = filterKey(state.filter);
   var params = new URLSearchParams();
   if (state.filter.q) params.set("q", state.filter.q);
   if (state.filter.actress) params.set("actress", state.filter.actress);
@@ -18,7 +32,8 @@ export function loadMovies() {
   var qs = params.toString();
   return api("/api/movies" + (qs ? "?" + qs : "")).then(function (data) {
     state.movies = data.items || [];
-    state.catalogPage = 1;
+    state.moviesFilterKey = key;
+    // Keep catalogPage; renderCatalog/pageSlice clamp it to a valid range.
     renderCatalog();
     return data;
   });
@@ -107,8 +122,8 @@ export function renderCatalog() {
   });
 
   renderPager(pager, slice, "部", function (page) {
-    state.catalogPage = page;
-    renderCatalog();
+    // Persist page in the hash so back-from-detail restores the same page.
+    goCatalogPage(page, { replace: true });
   });
 }
 
@@ -135,13 +150,17 @@ export function setupSearch() {
 }
 
 export function onCatalog(route) {
-  state.filter = {
-    q: (route.filter && route.filter.q) || "",
-    actress: (route.filter && route.filter.actress) || "",
-    tag: (route.filter && route.filter.tag) || "",
-  };
+  var nextFilter = normalizeFilter(route.filter);
+  var page = normalizePage(route.page);
+  // Reuse in-memory rows only when they were loaded for this exact filter.
+  var canReuse =
+    state.moviesFilterKey !== null &&
+    state.moviesFilterKey === filterKey(nextFilter);
+
+  state.filter = nextFilter;
   state.selectedCode = null;
-  state.catalogPage = 1;
+  state.catalogPage = page;
+
   var input = $("#searchInput");
   if (input) {
     var display =
@@ -149,5 +168,10 @@ export function onCatalog(route) {
     if (input.value !== display) input.value = display;
   }
   showView("catalog");
+
+  if (canReuse) {
+    renderCatalog();
+    return;
+  }
   loadMovies();
 }

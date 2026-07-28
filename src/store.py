@@ -22,20 +22,25 @@ def _utc_now() -> str:
 class CollectionStore:
     """Movie collection persistence (SQLite / MySQL / PostgreSQL).
 
-    list_all / search / label_index / actress_index share an in-memory cache
-    invalidated on upsert/delete. Remote MySQL round-trips are ~200–400ms; for
-    a personal library this keeps page navigations near-instant after the first
-    load without changing API shapes.
+    Process-local library cache (single-instance assumption): list/search/index
+    share one snapshot, invalidated on upsert/delete. Not coherent across
+    multiple app processes writing the same remote DB.
     """
 
     def __init__(self, db: Database | str | Path) -> None:
         self.db = db if isinstance(db, Database) else open_database(db)
         self._cache_lock = threading.Lock()
-        self._list_cache: list[MovieEntry] | None = None
+        self._by_code: dict[str, MovieEntry] | None = None
+        self._ordered: list[MovieEntry] | None = None
 
     def _invalidate_cache(self) -> None:
         with self._cache_lock:
-            self._list_cache = None
+            self._by_code = None
+            self._ordered = None
+
+    def _set_cache(self, ordered: list[MovieEntry]) -> None:
+        self._ordered = ordered
+        self._by_code = {e.code: e for e in ordered}
 
     def upsert(self, entry: MovieEntry) -> MovieEntry:
         code = normalize_code(entry.code)
@@ -68,25 +73,25 @@ class CollectionStore:
     def get_by_code(self, code: str) -> MovieEntry | None:
         code_n = normalize_code(code)
         with self._cache_lock:
-            cached = self._list_cache
-        if cached is not None:
-            for entry in cached:
-                if entry.code == code_n:
-                    return entry
-            return None
+            by_code = self._by_code
+        if by_code is not None:
+            return by_code.get(code_n)
         row = self.db.fetchone("SELECT * FROM movies WHERE code = ?", (code_n,))
         return self._row_to_entry(row) if row else None
 
     def list_all(self) -> list[MovieEntry]:
         with self._cache_lock:
-            if self._list_cache is not None:
-                return list(self._list_cache)
+            if self._ordered is not None:
+                return list(self._ordered)
         rows = self.db.fetchall(
             "SELECT * FROM movies ORDER BY created_at DESC, id DESC"
         )
         entries = [self._row_to_entry(r) for r in rows]
         with self._cache_lock:
-            self._list_cache = entries
+            # Another thread may have filled the cache while we queried.
+            if self._ordered is not None:
+                return list(self._ordered)
+            self._set_cache(entries)
             return list(entries)
 
     def search(
@@ -138,6 +143,10 @@ class CollectionStore:
         if not changes:
             return entry
         return self.upsert(entry.evolve(**changes))
+
+    def warm(self) -> int:
+        """Load the library cache. Returns film count."""
+        return len(self.list_all())
 
     @staticmethod
     def _row_to_entry(row: dict[str, Any]) -> MovieEntry:

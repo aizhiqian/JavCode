@@ -1,4 +1,4 @@
-import { state, $ } from "./state.js";
+import { state, $, invalidateCatalog } from "./state.js";
 import { api } from "./api.js";
 import { goCatalog, showView } from "./router.js";
 import {
@@ -75,6 +75,7 @@ function applyLabels(code, kind, list, opts) {
   return saveLabels(code, body).then(function (item) {
     if (opts.btn) opts.btn.disabled = false;
     if (item) {
+      invalidateCatalog();
       if (status) status.textContent = "已保存";
       renderDetail(item);
     } else if (status) {
@@ -169,6 +170,7 @@ function deleteMovie(code, btn) {
     .then(function (data) {
       if (data.ok) {
         state.selectedCode = null;
+        invalidateCatalog();
         goCatalog(null, { replace: true });
         return;
       }

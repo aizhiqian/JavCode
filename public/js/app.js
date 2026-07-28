@@ -5,6 +5,7 @@ import {
   buildHash,
   currentHash,
   goCatalog,
+  goCatalogPage,
   navigate,
   parseRoute,
   setRoutes,
@@ -66,7 +67,8 @@ function setupNav() {
       if (history.state && history.state.javcode) {
         history.back();
       } else {
-        goCatalog(null, { replace: true });
+        // No history entry: restore last catalog filter + page from state.
+        goCatalogPage(state.catalogPage || 1, { replace: true });
       }
     });
   }

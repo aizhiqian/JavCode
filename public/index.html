@@ -123,7 +123,20 @@
     <section id="view-labels" class="view">
       <div class="section-head">
         <h2>标签与分类</h2>
-        <p class="muted">点击即可筛选收藏影片</p>
+        <p id="labelCount" class="muted">点击即可筛选收藏影片</p>
+      </div>
+      <div class="list-filters">
+        <label class="filter-search-wrap">
+          <span class="visually-hidden">按拼音或名字筛选</span>
+          <input
+            id="labelPinyinInput"
+            type="search"
+            placeholder="拼音或名字，如 meiru / 美乳"
+            autocomplete="off"
+            enterkeyhint="search"
+          />
+        </label>
+        <div id="labelInitialBar" class="initial-bar" role="toolbar" aria-label="按拼音首字母筛选"></div>
       </div>
       <div class="labels-section">
         <h3 class="labels-heading">分类</h3>
@@ -143,8 +156,8 @@
         <h2>女优</h2>
         <p id="actressCount" class="muted">点击名字查看她的收藏影片</p>
       </div>
-      <div class="actress-filters">
-        <label class="actress-search-wrap">
+      <div class="list-filters">
+        <label class="filter-search-wrap">
           <span class="visually-hidden">按拼音或名字筛选</span>
           <input
             id="actressPinyinInput"

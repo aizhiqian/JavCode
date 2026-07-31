@@ -14,7 +14,8 @@ from src.parsers import (
     parse_javdb_search,
     parse_javlibrary_detail,
 )
-from src.relationships import actress_index, name_pinyin_meta
+from src.pinyin_meta import name_pinyin_meta
+from src.relationships import actress_index
 from src.search import label_index, search_library
 from src.store import CollectionStore
 from src.translate import ensure_zh_fields, normalize_entry, to_simplified
@@ -244,6 +245,10 @@ def test_label_index_aggregates_tags_and_categories():
     assert cats["单体作品"]["count"] == 2
     assert cats["共演"]["count"] == 1
     assert idx["tags"][0]["name"] == "美乳"
+    assert tags["美乳"]["initial"] == "M"
+    assert "meiru" in tags["美乳"]["pinyin_key"]
+    assert tags["NTR"]["initial"] == "N"
+    assert cats["单体作品"]["initial"] == "D"
 
 
 def test_name_pinyin_meta_initials():
@@ -310,6 +315,9 @@ def test_ui_static_structure():
         "state.js",
         "api.js",
         "util.js",
+        "pinyin-filter.js",
+        "label-library.js",
+        "label-suggest.js",
         "auth.js",
         "ai-status.js",
         "catalog.js",
@@ -351,15 +359,20 @@ def test_ui_static_structure():
     assert "card-grid" in css
     assert "actress-grid" in css
     assert "initial-bar" in css
+    assert "list-filters" in css
     assert "detail-layout" in css
     assert "hero-banner" in css
-    assert ".movie-card" in (css_dir / "components.css").read_text(encoding="utf-8")
-    assert ".pager" in (css_dir / "components.css").read_text(encoding="utf-8")
-    assert ".form-status" in (css_dir / "components.css").read_text(encoding="utf-8")
-    assert ".tag-cloud" in (css_dir / "components.css").read_text(encoding="utf-8")
+    components_css = (css_dir / "components.css").read_text(encoding="utf-8")
+    assert ".movie-card" in components_css
+    assert ".pager" in components_css
+    assert ".form-status" in components_css
+    assert ".tag-cloud" in components_css
+    assert ".list-filters" in components_css
+    assert ".initial-bar" in components_css
 
     assert "CATALOG_PAGE_SIZE" in js
     assert "ACTRESS_PAGE_SIZE" in js
+    assert "PINYIN_INITIALS" in js
     assert "actressPinyinQ" in js
     assert "共演：" not in js
     assert "fixture" not in js.lower()
@@ -381,11 +394,46 @@ def test_ui_static_structure():
     ):
         assert handler in app_js, f"app.js must wire {handler}"
     assert 'from "./ai-status.js"' in app_js
-    assert 'from "./catalog.js"' not in (js_dir / "detail.js").read_text(encoding="utf-8")
-    assert 'from "./catalog.js"' not in (js_dir / "labels.js").read_text(encoding="utf-8")
-    assert 'from "./catalog.js"' not in (js_dir / "actresses.js").read_text(
-        encoding="utf-8"
-    )
+
+    pinyin_filter_js = (js_dir / "pinyin-filter.js").read_text(encoding="utf-8")
+    assert "export function filterByPinyin" in pinyin_filter_js
+    assert "export function renderInitialBar" in pinyin_filter_js
+    assert "export function bindSearchInput" in pinyin_filter_js
+
+    label_library_js = (js_dir / "label-library.js").read_text(encoding="utf-8")
+    assert "export function loadLibraryLabels" in label_library_js
+    assert "export function getLibraryLabelItems" in label_library_js
+
+    label_suggest_js = (js_dir / "label-suggest.js").read_text(encoding="utf-8")
+    assert "export function bindLabelSuggest" in label_suggest_js
+    assert 'from "./pinyin-filter.js"' in label_suggest_js
+
+    detail_js = (js_dir / "detail.js").read_text(encoding="utf-8")
+    assert 'from "./catalog.js"' not in detail_js
+    assert 'from "./labels.js"' not in detail_js
+    assert 'from "./label-library.js"' in detail_js
+    assert 'from "./label-suggest.js"' in detail_js
+    assert "loadLibraryLabels" in detail_js
+    assert "label-clear-btn" in detail_js
+    assert "清除全部" in detail_js
+    assert "bindLabelSuggest" in detail_js
+    assert "isKnownLibraryLabel" not in detail_js
+    assert "introducedNew" not in detail_js
+    # Combobox implementation lives in label-suggest.js, not detail.
+    assert "function setupLabelSuggest" not in detail_js
+    assert "label-suggest" in (css_dir / "detail.css").read_text(encoding="utf-8")
+
+    labels_js = (js_dir / "labels.js").read_text(encoding="utf-8")
+    actresses_js = (js_dir / "actresses.js").read_text(encoding="utf-8")
+    assert 'from "./catalog.js"' not in labels_js
+    assert 'from "./catalog.js"' not in actresses_js
+    assert 'from "./pinyin-filter.js"' in labels_js
+    assert 'from "./pinyin-filter.js"' in actresses_js
+    assert 'from "./label-library.js"' in labels_js
+    assert "export function loadLibraryLabels" not in labels_js
+    assert "isKnownLibraryLabel" not in labels_js
+    assert "function setupLabelFilters" in labels_js
+    assert "function setupActressFilters" in actresses_js
     assert 'from "./add.js"' not in (js_dir / "settings.js").read_text(encoding="utf-8")
     assert "from \"./state.js\"" not in (js_dir / "api.js").read_text(encoding="utf-8")
 

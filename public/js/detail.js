@@ -8,6 +8,31 @@ import {
   femaleNames,
   sourceLabel,
 } from "./util.js";
+import {
+  getLibraryLabelItems,
+  loadLibraryLabels,
+} from "./label-library.js";
+import { bindLabelSuggest } from "./label-suggest.js";
+
+function sectionHeadHtml(title, kind, items) {
+  var hasItems = items && items.length;
+  return (
+    '<div class="detail-section-head">' +
+    "<h3>" +
+    escapeHtml(title) +
+    "</h3>" +
+    '<button type="button" class="btn label-clear-btn" data-kind="' +
+    escapeAttr(kind) +
+    '"' +
+    (hasItems ? "" : " disabled") +
+    ' title="清除全部' +
+    escapeAttr(title) +
+    '">' +
+    "清除全部" +
+    "</button>" +
+    "</div>"
+  );
+}
 
 function labelEditorHtml(kind, items, placeholder) {
   var chips =
@@ -32,7 +57,7 @@ function labelEditorHtml(kind, items, placeholder) {
             );
           })
           .join("")
-      : '<span class="muted detail-empty-labels">暂无，可在下方添加</span>';
+      : '<span class="muted detail-empty-labels">暂无，可在下方选择或新增</span>';
   return (
     '<div class="label-editor" data-kind="' +
     escapeAttr(kind) +
@@ -43,9 +68,12 @@ function labelEditorHtml(kind, items, placeholder) {
     '<form class="label-add-form" data-kind="' +
     escapeAttr(kind) +
     '">' +
+    '<div class="label-suggest-wrap">' +
     '<input type="text" class="label-add-input" maxlength="40" placeholder="' +
     escapeAttr(placeholder) +
-    '" autocomplete="off" />' +
+    '" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" />' +
+    '<ul class="label-suggest-list" role="listbox" hidden></ul>' +
+    "</div>" +
     '<button type="submit" class="btn label-add-btn">添加</button>' +
     "</form>" +
     "</div>"
@@ -66,23 +94,41 @@ function saveLabels(code, payload) {
   });
 }
 
+/**
+ * Persist labels for one kind. Re-renders detail from the server item and
+ * refreshes the shared library index so suggestions stay coherent.
+ */
 function applyLabels(code, kind, list, opts) {
   opts = opts || {};
   var body = kind === "categories" ? { categories: list } : { tags: list };
   var status = $("#labelSaveStatus");
   if (status) status.textContent = "保存中…";
   if (opts.btn) opts.btn.disabled = true;
+
   return saveLabels(code, body).then(function (item) {
     if (opts.btn) opts.btn.disabled = false;
-    if (item) {
-      invalidateCatalog();
-      if (status) status.textContent = "已保存";
-      renderDetail(item);
-    } else if (status) {
-      status.textContent = "";
+    if (!item) {
+      if (status) status.textContent = "";
+      return null;
     }
-    return item;
+    invalidateCatalog();
+    if (status) status.textContent = "已保存";
+    return loadLibraryLabels()
+      .catch(function () {
+        return state.labels;
+      })
+      .then(function () {
+        renderDetail(item);
+        return item;
+      });
   });
+}
+
+function addLabelValue(code, kind, currentList, value, opts) {
+  var raw = String(value || "").trim();
+  if (!raw) return Promise.resolve(null);
+  if (currentList.indexOf(raw) !== -1) return Promise.resolve(null);
+  return applyLabels(code, kind, currentList.concat([raw]), opts);
 }
 
 function stat(label, value) {
@@ -236,10 +282,10 @@ export function renderDetail(m) {
       })
       .join("") +
     "</div>" +
-    "<h3 style='margin:0 0 0.5rem;font-size:1rem'>分类</h3>" +
-    labelEditorHtml("categories", categories, "添加分类…") +
-    "<h3 style='margin:1rem 0 0.5rem;font-size:1rem'>标签</h3>" +
-    labelEditorHtml("tags", tags, "添加标签…") +
+    sectionHeadHtml("分类", "categories", categories) +
+    labelEditorHtml("categories", categories, "选择已有或输入新分类…") +
+    sectionHeadHtml("标签", "tags", tags) +
+    labelEditorHtml("tags", tags, "选择已有或输入新标签…") +
     '<p id="labelSaveStatus" class="label-save-status muted" aria-live="polite"></p>' +
     '<div class="detail-actions">' +
     '<button type="button" class="btn danger" id="deleteMovieBtn" data-code="' +
@@ -262,34 +308,40 @@ export function renderDetail(m) {
     el.addEventListener("click", function () {
       var kind = el.getAttribute("data-kind");
       var label = el.getAttribute("data-label");
-      var next =
-        kind === "categories"
-          ? categories.filter(function (x) {
-              return x !== label;
-            })
-          : tags.filter(function (x) {
-              return x !== label;
-            });
-      applyLabels(m.code, kind, next);
+      var current = kind === "categories" ? categories : tags;
+      applyLabels(
+        m.code,
+        kind,
+        current.filter(function (x) {
+          return x !== label;
+        })
+      );
+    });
+  });
+  root.querySelectorAll(".label-clear-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var kind = btn.getAttribute("data-kind");
+      var title = kind === "categories" ? "分类" : "标签";
+      var list = kind === "categories" ? categories : tags;
+      if (!list.length) return;
+      if (!window.confirm("确定清除本片的全部" + title + "？")) return;
+      applyLabels(m.code, kind, [], { btn: btn });
     });
   });
   root.querySelectorAll(".label-add-form").forEach(function (form) {
-    form.addEventListener("submit", function (e) {
-      e.preventDefault();
-      var kind = form.getAttribute("data-kind");
-      var input = form.querySelector(".label-add-input");
-      var value = (input && input.value ? input.value : "").trim();
-      if (!value) return;
-      var list = kind === "categories" ? categories.slice() : tags.slice();
-      if (list.indexOf(value) !== -1) {
-        if (input) input.value = "";
-        return;
-      }
-      list.push(value);
-      var submitBtn = form.querySelector('button[type="submit"]');
-      applyLabels(m.code, kind, list, { btn: submitBtn }).then(function (item) {
-        if (item && input) input.value = "";
-      });
+    var kind = form.getAttribute("data-kind");
+    var list = kind === "categories" ? categories : tags;
+    var submitBtn = form.querySelector('button[type="submit"]');
+    bindLabelSuggest(form, {
+      getItems: function () {
+        return getLibraryLabelItems(kind);
+      },
+      getExclude: function () {
+        return list;
+      },
+      onPick: function (value) {
+        addLabelValue(m.code, kind, list, value, { btn: submitBtn });
+      },
     });
   });
   var delBtn = $("#deleteMovieBtn");
@@ -306,7 +358,13 @@ export function loadDetail(code) {
   showView("detail");
   var root = $("#detailRoot");
   if (root) root.innerHTML = "<p class='muted'>加载中…</p>";
-  api("/api/movies/" + encodeURIComponent(code)).then(function (data) {
+  Promise.all([
+    api("/api/movies/" + encodeURIComponent(code)),
+    loadLibraryLabels().catch(function () {
+      return state.labels || { categories: [], tags: [] };
+    }),
+  ]).then(function (results) {
+    var data = results[0];
     if (state.selectedCode !== code || state.view !== "detail") return;
     if (!data.ok || !data.item) {
       if (root) root.innerHTML = "<p class='form-status error'>未找到该条目</p>";

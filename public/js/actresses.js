@@ -1,115 +1,48 @@
-import { state, $, ACTRESS_INITIALS, ACTRESS_PAGE_SIZE } from "./state.js";
+import { state, $, ACTRESS_PAGE_SIZE } from "./state.js";
 import { api } from "./api.js";
 import { goCatalog, showView } from "./router.js";
 import { escapeAttr, escapeHtml, pageSlice, renderPager } from "./util.js";
+import {
+  bindSearchInput,
+  countInitials,
+  filterByPinyin,
+  filterHintText,
+  renderInitialBar,
+} from "./pinyin-filter.js";
 
-var actressFiltersBound = false;
-
-function actressInitialOf(a) {
-  var ini = String((a && a.initial) || "").toUpperCase();
-  if (ini.length === 1 && ini >= "A" && ini <= "Z") return ini;
-  return "#";
-}
-
-function filteredActresses() {
-  var items = state.actresses || [];
-  var letter = state.actressInitial || "all";
-  var q = String(state.actressPinyinQ || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "");
-  return items.filter(function (a) {
-    if (letter !== "all" && actressInitialOf(a) !== letter) return false;
-    if (!q) return true;
-    var name = String(a.name || "").toLowerCase();
-    var py = String(a.pinyin || "")
-      .toLowerCase()
-      .replace(/\s+/g, "");
-    var key = String(a.pinyin_key || "").toLowerCase();
-    return (
-      name.indexOf(q) !== -1 ||
-      py.indexOf(q) !== -1 ||
-      key.indexOf(q) !== -1
-    );
-  });
-}
-
-function renderActressInitialBar(available) {
-  var bar = $("#actressInitialBar");
-  if (!bar) return;
-  var counts = available || {};
-  var letters = ["all"].concat(ACTRESS_INITIALS).concat(["#"]);
-  bar.innerHTML = letters
-    .map(function (L) {
-      var label = L === "all" ? "全部" : L;
-      var n = L === "all" ? state.actresses.length : counts[L] || 0;
-      var active = state.actressInitial === L ? " active" : "";
-      var disabled = L !== "all" && n === 0 ? " disabled" : "";
-      return (
-        '<button type="button" class="initial-chip' +
-        active +
-        '" data-initial="' +
-        L +
-        '"' +
-        disabled +
-        ' title="' +
-        (L === "all" ? "全部女优" : "拼音首字母 " + L) +
-        (n ? " · " + n + " 位" : "") +
-        '">' +
-        label +
-        (L !== "all" && n ? '<span class="initial-n">' + n + "</span>" : "") +
-        "</button>"
-      );
-    })
-    .join("");
-  bar.querySelectorAll("[data-initial]").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      if (btn.disabled) return;
-      state.actressInitial = btn.getAttribute("data-initial") || "all";
-      state.actressPage = 1;
-      renderActresses();
-    });
-  });
-}
+var actressSearchBound = false;
 
 function setupActressFilters() {
-  var input = $("#actressPinyinInput");
-  if (!input || actressFiltersBound) return;
-  actressFiltersBound = true;
-  var timer = null;
-  input.addEventListener("input", function () {
-    clearTimeout(timer);
-    timer = setTimeout(function () {
-      state.actressPinyinQ = input.value || "";
+  if (actressSearchBound) return;
+  actressSearchBound = true;
+  bindSearchInput($("#actressPinyinInput"), {
+    onChange: function (value) {
+      state.actressPinyinQ = value;
       state.actressPage = 1;
       renderActresses();
-    }, 160);
-  });
-  input.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      clearTimeout(timer);
-      state.actressPinyinQ = input.value || "";
-      state.actressPage = 1;
-      renderActresses();
-    }
+    },
   });
 }
 
 export function renderActresses() {
-  setupActressFilters();
   var list = $("#actressList");
   var count = $("#actressCount");
   var pager = $("#actressPager");
   if (!list) return;
 
   var all = state.actresses || [];
-  var initialCounts = {};
-  all.forEach(function (a) {
-    var ini = actressInitialOf(a);
-    initialCounts[ini] = (initialCounts[ini] || 0) + 1;
+  renderInitialBar($("#actressInitialBar"), {
+    selected: state.actressInitial,
+    counts: countInitials(all),
+    total: all.length,
+    unit: "位",
+    allTitle: "全部女优",
+    onSelect: function (letter) {
+      state.actressInitial = letter;
+      state.actressPage = 1;
+      renderActresses();
+    },
   });
-  renderActressInitialBar(initialCounts);
 
   if (!all.length) {
     list.innerHTML = "<p class='muted'>暂无女优数据，请先添加影片。</p>";
@@ -121,7 +54,10 @@ export function renderActresses() {
     return;
   }
 
-  var items = filteredActresses();
+  var items = filterByPinyin(all, {
+    letter: state.actressInitial,
+    query: state.actressPinyinQ,
+  });
   if (!items.length) {
     list.innerHTML =
       "<p class='muted'>没有匹配的女优，试试其他拼音或首字母。</p>";
@@ -139,17 +75,11 @@ export function renderActresses() {
   var slice = pageSlice(items, state.actressPage, ACTRESS_PAGE_SIZE);
   state.actressPage = slice.page;
   if (count) {
-    var filterHint = "";
-    if (state.actressInitial && state.actressInitial !== "all") {
-      filterHint += " · " + state.actressInitial;
-    }
-    if (String(state.actressPinyinQ || "").trim()) {
-      filterHint += " · “" + String(state.actressPinyinQ).trim() + "”";
-    }
+    var hint = filterHintText(state.actressInitial, state.actressPinyinQ);
     count.textContent =
-      (filterHint ? "筛选 " + slice.total + " / 共 " + all.length : "共 " + slice.total) +
+      (hint ? "筛选 " + slice.total + " / 共 " + all.length : "共 " + slice.total) +
       " 位" +
-      filterHint +
+      hint +
       " · 点击名字查看收藏影片" +
       (slice.totalPages > 1
         ? " · 第 " + slice.page + "/" + slice.totalPages + " 页"
@@ -202,6 +132,7 @@ export function renderActresses() {
 }
 
 export function loadActresses() {
+  setupActressFilters();
   return api("/api/actresses").then(function (data) {
     state.actresses = data.items || [];
     state.actressPage = 1;

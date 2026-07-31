@@ -1,6 +1,5 @@
 export var CATALOG_PAGE_SIZE = 10;
 export var ACTRESS_PAGE_SIZE = 20;
-export var ACTRESS_INITIALS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 export var state = {
   movies: [],
@@ -14,6 +13,9 @@ export var state = {
   actressPage: 1,
   actressInitial: "all",
   actressPinyinQ: "",
+  labels: { categories: [], tags: [] },
+  labelInitial: "all",
+  labelPinyinQ: "",
   auth: { configured: false, authenticated: false, username: "" },
   appReady: false,
 };

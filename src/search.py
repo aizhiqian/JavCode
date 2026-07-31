@@ -5,6 +5,7 @@ from typing import Iterable
 
 from .models import MovieEntry
 from .normalize import normalize_code
+from .pinyin_meta import name_pinyin_meta
 
 
 def _hay_actress(entry: MovieEntry) -> str:
@@ -78,10 +79,17 @@ def _count_labels(entries: Iterable[MovieEntry], attr: str) -> list[dict]:
                 continue
             if entry.code not in films[name]:
                 films[name].append(entry.code)
-    return [
-        {"name": name, "count": len(codes), "codes": codes}
-        for name, codes in sorted(films.items(), key=lambda kv: (-len(kv[1]), kv[0]))
-    ]
+    result = []
+    for name, codes in sorted(films.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        result.append(
+            {
+                "name": name,
+                "count": len(codes),
+                "codes": codes,
+                **name_pinyin_meta(name),
+            }
+        )
+    return result
 
 
 def label_index(entries: Iterable[MovieEntry]) -> dict:
